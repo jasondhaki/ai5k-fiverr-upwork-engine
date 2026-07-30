@@ -1,0 +1,145 @@
+"""
+GitHub parser: pulls a user's public, non-fork repos via the REST API and
+turns each repo's name/description/README into grounded claims.
+
+Read-only, unauthenticated calls work but are rate-limited to 60/hour; set
+GITHUB_TOKEN in the environment to raise that limit. No GraphQL needed for
+this slice - REST's per-repo README endpoint is enough.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from datetime import date, datetime
+
+import requests
+
+from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
+from app.schemas import Claim, SourceType
+from app.storage.store import file_store
+
+logger = logging.getLogger(__name__)
+
+GITHUB_API = "https://api.github.com"
+REQUEST_TIMEOUT = 10
+
+
+class GitHubFetchError(ValueError):
+    """Raised when the GitHub API can't be reached or the user doesn't exist.
+    Never swallowed - a typo'd username should not silently look like "no repos"."""
+
+
+def _headers(accept: str = "application/vnd.github+json") -> dict[str, str]:
+    headers = {"Accept": accept}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def fetch_repos(username: str, session: requests.Session | None = None) -> list[dict]:
+    """Fetch public, non-fork repos for `username`, most-recently-pushed first."""
+    http = session or requests
+    response = http.get(
+        f"{GITHUB_API}/users/{username}/repos",
+        params={"sort": "pushed", "per_page": 20, "type": "owner"},
+        headers=_headers(),
+        timeout=REQUEST_TIMEOUT,
+    )
+    if response.status_code == 404:
+        raise GitHubFetchError(f"GitHub user '{username}' does not exist.")
+    if response.status_code == 401:
+        # Never echo GITHUB_TOKEN or the response body back - a bad/expired
+        # token gets a fixed, generic message, not whatever GitHub sent back.
+        raise GitHubFetchError("GitHub auth failed - check GITHUB_TOKEN.")
+    if response.status_code in (403, 429):
+        raise GitHubFetchError(
+            "GitHub rate limit exceeded - set GITHUB_TOKEN to raise the "
+            "limit, or wait and retry."
+        )
+    if response.status_code != 200:
+        raise GitHubFetchError(
+            f"GitHub API returned {response.status_code} for user '{username}'."
+        )
+    repos = response.json()
+    return [repo for repo in repos if not repo.get("fork")]
+
+
+def _fetch_readme(repo: dict, session: requests.Session | None = None) -> str:
+    repo_url = repo.get("url")
+    if not repo_url:
+        return ""
+    http = session or requests
+    try:
+        response = http.get(
+            f"{repo_url}/readme",
+            headers=_headers(accept="application/vnd.github.raw+json"),
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException:
+        return ""  # README is best-effort; name/description alone still ground
+    return response.text if response.status_code == 200 else ""
+
+
+def _commit_recency(repo: dict) -> date | None:
+    """
+    The repo list endpoint already returns `pushed_at` - the timestamp of the
+    last push to the default branch, i.e. the last commit - so this needs no
+    extra API call. Malformed or missing timestamps discount to None (treated
+    as "unknown age", never as "brand new") rather than raising, since a
+    parse hiccup here shouldn't fail the whole repo.
+    """
+    raw = repo.get("pushed_at")
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").date()
+    except ValueError:
+        return None
+
+
+def _repo_text(repo: dict, readme: str) -> str:
+    parts = [repo.get("name") or "", repo.get("description") or ""]
+    if readme:
+        parts.append(readme)
+    return "\n\n".join(part for part in parts if part)
+
+
+def parse_github(
+    username: str,
+    session: requests.Session | None = None,
+    client: LLMClient | None = None,
+) -> list[Claim]:
+    """Pull repos for `username` and extract grounded claims from each repo's
+    name + description + README text."""
+    repos = fetch_repos(username, session=session)
+    logger.info("Found %d non-fork repos for %s", len(repos), username)
+    llm_client = client or build_default_client()
+
+    claims: list[Claim] = []
+    for index, repo in enumerate(repos, start=1):
+        repo_name = repo.get("name") or username
+        readme = _fetch_readme(repo, session=session)
+        text = _repo_text(repo, readme)
+        if not text.strip():
+            logger.info("[%d/%d] repo %s has no usable text, skipping", index, len(repos), repo_name)
+            continue
+        logger.info("[%d/%d] Starting extraction for repo %s", index, len(repos), repo_name)
+        # The original is the raw API data (the repo list entry plus its
+        # README) - retained as-is, distinct from `text`, the derived string
+        # spans are actually grounded against.
+        original = json.dumps({"repo": repo, "readme": readme}, indent=2).encode("utf-8")
+        pair = file_store.put_source(original=original, text=text, original_suffix=".json")
+        claims.extend(
+            extract_candidate_claims(
+                llm_client,
+                document_id=pair.text_id,
+                text=text,
+                source_type=SourceType.GITHUB_REPO,
+                locator_prefix=f"repo {repo_name}",
+                observed_date=_commit_recency(repo),
+            )
+        )
+    return claims

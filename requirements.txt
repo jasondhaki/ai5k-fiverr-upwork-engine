@@ -1,0 +1,33 @@
+# Core web + validation (the walking skeleton runs on just these four)
+fastapi>=0.110
+uvicorn[standard]>=0.27
+jinja2>=3.1
+pydantic>=2.6
+python-multipart>=0.0.9
+
+# Testing
+pytest>=8.0
+httpx>=0.27
+fpdf2>=2.8               # generates throwaway PDF fixtures for CV parser tests
+
+# --- Added as you replace stubs (uncomment when you reach each stage) ------
+
+# Ingestion (M1)
+docling>=2.0             # CV / resume parsing (native-text PDFs only)
+requests>=2.31           # GitHub / Hugging Face API pulls
+anthropic>=0.39          # LLM extraction via the SDK directly (identity/history/skills passes)
+python-dotenv>=1.0       # loads GITHUB_TOKEN and friends from .env
+
+# Evidence + scoring semantic coverage (M2/M3)
+# sentence-transformers>=2.5   # local embeddings for keyword semantic match
+# numpy>=1.26
+
+# Generation (M3) - anthropic already added above, reused for asset generation
+
+# Persistence (M4, when you move off in-memory)
+# sqlalchemy>=2.0
+# psycopg[binary]>=3.1    # PostgreSQL
+# pgvector>=0.2           # vector column support
+
+# Learning loop (Stage 4, build last)
+# scikit-learn>=1.4       # ridge regression for weight refit

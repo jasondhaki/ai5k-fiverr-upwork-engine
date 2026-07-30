@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profile Readiness &middot; {{ r.niche }}</title>
+  <style>
+    :root { --ink:#1f2a44; --muted:#6b7280; --line:#e5e7eb; --accent:#0f766e;
+            --block:#b91c1c; --block-bg:#fef2f2; --amber:#b45309; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+           color: var(--ink); max-width: 720px; margin: 0 auto; padding: 40px 24px; line-height: 1.5; }
+    .score-card { border:1px solid var(--line); border-radius:12px; padding:24px; margin-bottom:28px; }
+    .readiness { font-size: 15px; letter-spacing:.02em; color: var(--muted); text-transform:uppercase; }
+    .readiness b { color: var(--ink); font-size: 28px; }
+    .cap-note { color: var(--block); font-size: 13px; margin-top: 4px; }
+    .framing { font-size: 15px; margin: 8px 0 0; }
+    table { width:100%; border-collapse: collapse; margin: 8px 0 28px; }
+    th { text-align:left; font-size:12px; text-transform:uppercase; color:var(--muted);
+         border-bottom:1px solid var(--line); padding:8px 6px; }
+    td { padding:10px 6px; border-bottom:1px solid var(--line); font-size:14px; vertical-align:top; }
+    .blocking td { background: var(--block-bg); }
+    .tag-block { color: var(--block); font-weight:700; font-size:12px; }
+    .tag-pri { color: var(--accent); font-weight:700; }
+    h2 { font-size: 16px; margin: 28px 0 8px; }
+    .asset { border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
+    .asset .kind { font-size:12px; text-transform:uppercase; color:var(--muted); }
+    .unvalidated { color: var(--amber); font-size:12px; }
+    .back { display:inline-block; margin-top: 24px; color: var(--accent); text-decoration:none; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="score-card">
+    <div class="readiness">Profile Readiness &nbsp; <b>{{ r.readiness|int }}</b> / 100</div>
+    {% if r.capped %}<div class="cap-note">{{ r.cap_note }}</div>{% endif %}
+    <p class="framing">
+      You have {{ r.total_claims }} claim{{ '' if r.total_claims == 1 else 's' }}
+      and can prove {{ r.provable_claims }}. Below is the fastest route to proving more.
+    </p>
+  </div>
+
+  <h2>Dimensions</h2>
+  <table>
+    <thead><tr><th>Dimension</th><th>You now</th><th>Score</th></tr></thead>
+    <tbody>
+      {% for d in r.dimensions %}
+      <tr>
+        <td>{{ d.name.replace('_', ' ')|title }}</td>
+        <td>{{ d.detail or '' }}</td>
+        <td>{{ d.score|int }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if r.blocking %}
+  <h2>Fix before publishing</h2>
+  <table>
+    <tbody>
+      {% for b in r.blocking %}
+      <tr class="blocking">
+        <td><span class="tag-block">BLOCKING</span></td>
+        <td colspan="2">{{ b.description }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Top gaps &mdash; ranked by points per hour</h2>
+  <table>
+    <thead><tr><th>Dimension</th><th>Now &rarr; target</th><th>Priority</th></tr></thead>
+    <tbody>
+      {% for g in r.gaps %}
+      <tr>
+        <td>{{ g.dimension.replace('_', ' ')|title }}</td>
+        <td>{{ g.current|int }} &rarr; {{ g.target|int }}</td>
+        <td><span class="tag-pri">{{ '%.1f'|format(g.priority) }} pts/hr</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Rewritten profile</h2>
+  {% for a in r.generated %}
+  <div class="asset">
+    <div class="kind">{{ a.kind }}</div>
+    <div>{{ a.text }}</div>
+    {% if not a.validated %}<div class="unvalidated">&#9888; not yet span-validated (stub)</div>{% endif %}
+  </div>
+  {% endfor %}
+
+  <a class="back" href="/">&larr; Analyze another profile</a>
+</body>
+</html>

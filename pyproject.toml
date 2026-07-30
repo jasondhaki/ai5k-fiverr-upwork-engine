@@ -1,0 +1,17 @@
+[project]
+name = "ai5k-profile-intelligence"
+version = "0.1.0"
+description = "Profile Intelligence System - working slice"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "slow: exercises real Docling PDF conversion; skip with -m \"not slow\" during fast iteration",
+    "live_api: makes real calls to a live LLM provider (costs API quota, can trigger rate-limit backoff lasting minutes to hours); skip with -m \"not live_api\" - run deliberately only, never during routine iteration",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

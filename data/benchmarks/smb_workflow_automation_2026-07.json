@@ -1,0 +1,27 @@
+{
+  "niche": "SMB workflow automation",
+  "version": "2026-07",
+  "required_terms": ["n8n", "Make.com", "API integration", "webhook"],
+  "benchmark_topics": [
+    "workflow automation",
+    "no-code integration",
+    "data pipelines",
+    "CRM automation",
+    "error handling and retries"
+  ],
+  "title_formula": "[role] - [vertical] - [outcome]",
+  "overview_words_min": 280,
+  "overview_words_max": 420,
+  "portfolio_min_items": 3,
+  "portfolio_min_quantified": 2,
+  "rate_band": { "low": 50.0, "high": 80.0, "justifying_tiers": ["T1", "T2"] },
+  "dimension_targets": {
+    "positioning": 85.0,
+    "evidence_quality": 80.0,
+    "keyword_coverage": 90.0,
+    "portfolio_quality": 85.0,
+    "completeness": 85.0,
+    "conversion": 80.0,
+    "pricing_strategy": 80.0
+  }
+}
