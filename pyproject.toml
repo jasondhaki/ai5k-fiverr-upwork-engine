@@ -9,7 +9,8 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "slow: exercises real Docling PDF conversion; skip with -m \"not slow\" during fast iteration",
-    "live_api: makes real calls to a live LLM provider (costs API quota, can trigger rate-limit backoff lasting minutes to hours); skip with -m \"not live_api\" - run deliberately only, never during routine iteration",
+    "live_api: makes real calls to a live external provider - LLM inference (Anthropic/Groq) or object storage (B2) - that costs quota/money and can trigger rate-limit backoff lasting minutes to hours; skip with -m \"not live_api\" - run deliberately only, never during routine iteration",
+    "db: connects to a real Postgres database (Neon via DATABASE_URL) rather than the fast suite's in-memory SQLite; skip with -m \"not db\" - run deliberately, e.g. after touching app/storage/models.py or an Alembic migration",
 ]
 
 [tool.ruff]

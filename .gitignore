@@ -5,6 +5,7 @@ venv/
 .env
 data/uploads/*
 !data/uploads/.gitkeep
+data/app.db
 .pytest_cache/
 .ruff_cache/
 *.egg-info/

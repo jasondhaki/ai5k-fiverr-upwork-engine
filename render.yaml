@@ -1,0 +1,41 @@
+# Render Blueprint (Infra-as-Code). See README.md's "Deploying to Render"
+# section for the one-time setup this assumes (Neon DATABASE_URL, a B2
+# bucket, and the env vars below set in Render's dashboard - never here).
+#
+# Docker, not Render's native Python runtime: Docling's [standard] extra
+# needs system libraries (libgl1/libglib2.0-0 for opencv, libgomp1 for
+# torch/onnxruntime) that the native runtime's image doesn't ship and that
+# Render gives no apt access to install. See Dockerfile for the exact
+# packages and why each is there.
+services:
+  - type: web
+    name: ai5k-profile-intelligence
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    # Runs `alembic upgrade head` before each deploy goes live, so schema
+    # changes ship in lockstep with the code that needs them rather than
+    # requiring a separate manual migration step against Neon.
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Neon connection string - set in Render's dashboard
+      - key: STORAGE_BACKEND
+        value: b2
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_BUCKET_NAME
+        sync: false
+      - key: LLM_PROVIDER
+        sync: false # 'anthropic' or 'groq'
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false

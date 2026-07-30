@@ -24,10 +24,16 @@ python-dotenv>=1.0       # loads GITHUB_TOKEN and friends from .env
 
 # Generation (M3) - anthropic already added above, reused for asset generation
 
-# Persistence (M4, when you move off in-memory)
-# sqlalchemy>=2.0
-# psycopg[binary]>=3.1    # PostgreSQL
-# pgvector>=0.2           # vector column support
+# Persistence - Neon (Postgres + pgvector), behind app/storage/repository.py
+sqlalchemy>=2.0
+psycopg[binary]>=3.1      # PostgreSQL driver (psycopg3 - see app/storage/db.py)
+pgvector>=0.2             # vector column support
+alembic>=1.13             # migrations (see alembic/)
+
+# Object storage - Backblaze B2 (S3-compatible), behind app/storage/store.py's
+# FileStore protocol. Only needed when STORAGE_BACKEND=b2; local dev defaults
+# to LocalFileStore, which needs none of this.
+boto3>=1.34
 
 # Learning loop (Stage 4, build last)
 # scikit-learn>=1.4       # ridge regression for weight refit

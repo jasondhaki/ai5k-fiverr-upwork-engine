@@ -24,6 +24,7 @@ point at the old extracted text.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import NamedTuple, Protocol
@@ -127,6 +128,118 @@ class LocalFileStore:
         return data["original_id"]
 
 
-# The single instance the app imports. Swap this line (and only this line) for
-# an S3FileStore when the system goes hosted.
-file_store: FileStore = LocalFileStore()
+class B2FileStore:
+    """
+    Backblaze B2-backed implementation for the hosted demo. B2 is
+    S3-compatible, so this is a thin wrapper over boto3's S3 client pointed
+    at B2's S3-compatible endpoint - no B2-specific SDK needed, same as the
+    extractor reusing Groq's OpenAI-compatible REST endpoint instead of a
+    second LLM SDK.
+
+    Conforms to the exact same FileStore protocol as LocalFileStore, so
+    everything upstream (span validator re-reads, CV parser, etc.) works
+    unchanged regardless of which backend STORAGE_BACKEND selected.
+
+    Mirrors LocalFileStore's on-disk layout one-for-one: `put` writes one
+    object per document_id(+suffix); `put_source`'s original/text link is a
+    small JSON object under a `_meta/` key prefix, exactly like
+    LocalFileStore's `_meta` subdirectory - not S3 object metadata headers,
+    so both stores' persistence model (and this class's tests) stay
+    identical in shape.
+    """
+
+    def __init__(
+        self, *, key_id: str, application_key: str, endpoint: str, bucket_name: str
+    ) -> None:
+        import boto3  # local import: only the b2 backend needs boto3 installed
+
+        self._bucket = bucket_name
+        # endpoint is stored bare (e.g. "s3.us-east-005.backblazeb2.com") -
+        # boto3's endpoint_url needs the scheme, prepended here rather than
+        # in the env var so B2_ENDPOINT reads the same as B2's own console.
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{endpoint}",
+            aws_access_key_id=key_id,
+            aws_secret_access_key=application_key,
+        )
+
+    def put(self, content: bytes, suffix: str = "") -> str:
+        document_id = uuid.uuid4().hex
+        self._client.put_object(Bucket=self._bucket, Key=f"{document_id}{suffix}", Body=content)
+        return document_id
+
+    def _resolve_key(self, document_id: str) -> str:
+        """S3 equivalent of LocalFileStore's glob-by-prefix `_resolve` - the
+        suffix isn't known at retrieval time, so list by prefix instead of
+        get_object-ing a guessed key."""
+        response = self._client.list_objects_v2(
+            Bucket=self._bucket, Prefix=document_id, MaxKeys=1
+        )
+        contents = response.get("Contents") or []
+        if not contents:
+            raise FileNotFoundError(f"No stored object for document_id {document_id}")
+        return contents[0]["Key"]
+
+    def get_bytes(self, document_id: str) -> bytes:
+        key = self._resolve_key(document_id)
+        obj = self._client.get_object(Bucket=self._bucket, Key=key)
+        return obj["Body"].read()
+
+    def get_text(self, document_id: str) -> str:
+        return self.get_bytes(document_id).decode("utf-8", errors="replace")
+
+    def put_source(
+        self, *, original: bytes, text: str, original_suffix: str = ""
+    ) -> SourceDocument:
+        original_id = self.put(original, suffix=original_suffix)
+        text_id = self.put(text.encode("utf-8"), suffix=".txt")
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=f"_meta/{text_id}.json",
+            Body=json.dumps({"original_id": original_id}).encode("utf-8"),
+        )
+        return SourceDocument(text_id=text_id, original_id=original_id)
+
+    def get_original_id(self, text_document_id: str) -> str:
+        try:
+            obj = self._client.get_object(Bucket=self._bucket, Key=f"_meta/{text_document_id}.json")
+        except self._client.exceptions.NoSuchKey:
+            raise FileNotFoundError(
+                f"No original linked to text document {text_document_id} - "
+                "it wasn't stored via put_source()"
+            ) from None
+        data = json.loads(obj["Body"].read())
+        return data["original_id"]
+
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(f"{name} must be set when STORAGE_BACKEND=b2")
+    return value
+
+
+def _build_file_store() -> FileStore:
+    """
+    The one place a storage backend is chosen, mirroring build_default_client
+    in app/ingestion/extractor.py. Defaults to 'local' so the fast test suite
+    (and a fresh `uvicorn --reload`) never needs real B2 credentials - only
+    STORAGE_BACKEND=b2, set explicitly (e.g. in render.yaml), switches it.
+    """
+    backend = os.environ.get("STORAGE_BACKEND", "local").strip().lower()
+    if backend == "local":
+        return LocalFileStore()
+    if backend == "b2":
+        return B2FileStore(
+            key_id=_require_env("B2_KEY_ID"),
+            application_key=_require_env("B2_APPLICATION_KEY"),
+            endpoint=_require_env("B2_ENDPOINT"),
+            bucket_name=_require_env("B2_BUCKET_NAME"),
+        )
+    raise ValueError(f"Unknown STORAGE_BACKEND '{backend}' - expected 'local' or 'b2'.")
+
+
+# The single instance the app imports. Backend picked by STORAGE_BACKEND
+# (local|b2) - swap the env var, not this line, to go from disk to B2.
+file_store: FileStore = _build_file_store()

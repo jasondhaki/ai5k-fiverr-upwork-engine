@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config.weights import validate_config
 from app.platform.pipeline import PipelineInput, run_pipeline
+from app.storage.repository import repository
 
 validate_config()  # fail loudly at startup if weights are inconsistent
 
@@ -64,6 +65,13 @@ async def analyze(
         upwork_text=upwork_text or None,
     )
     result = run_pipeline(inp)
+    # Persisted through the Repository interface only (app/storage/repository.py),
+    # never raw SQLAlchemy - mirrors how file_store is the only thing that ever
+    # touches disk/object storage. Claims aren't persisted from here yet: run_pipeline
+    # returns the aggregate Result, not the underlying claim list, and threading that
+    # through is out of scope for this pass (Repository.save_claims is already built
+    # and tested independently in tests/test_repository.py for when that's needed).
+    repository.save_result(result)
     return templates.TemplateResponse(request, "result.html", {"r": result})
 
 

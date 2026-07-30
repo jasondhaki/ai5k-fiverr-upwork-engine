@@ -54,8 +54,19 @@ broken the product.
   **Add optional fields if you must; never rename or remove one.**
 - `app/config/weights.py` — tier weights, dimension weights, efficacy table,
   both caps. Data, not logic. Tune values here; don't scatter constants in code.
-- `app/storage/store.py` — file storage behind an interface. Local disk now,
-  swap one line for S3 later.
+- `app/storage/store.py` — file storage behind an interface. `B2FileStore`
+  (Backblaze B2, S3-compatible via boto3) is the production `FileStore`;
+  `LocalFileStore` (disk) remains the dev default. `STORAGE_BACKEND=local|b2`
+  picks between them - never hardcode which one, always go through the
+  `file_store` singleton.
+- `app/storage/db.py` + `app/storage/models.py` + `app/storage/repository.py`
+  — persistence behind a `Repository` interface, the same pattern as
+  `FileStore`. Postgres + pgvector on Neon (`DATABASE_URL`), falls back to a
+  local SQLite file when unset. One table per frozen schema (claims,
+  benchmarks, results); nested structures stay JSONB rather than fully
+  normalized. Migrations live in `alembic/` - `alembic upgrade head` creates
+  or updates the schema; nothing in `app/storage/` calls
+  `Base.metadata.create_all()` against a real database itself.
 - `app/ingestion/span_grounding.py` — the index round-trip. The core invariant.
 - `app/platform/pipeline.py` — the orchestrator. Six stubbed stages.
 - `app/platform/api.py` + `templates/` — the walking skeleton UI.
@@ -66,29 +77,35 @@ Run the tests:     `pytest -q`
 
 ## Testing conventions
 
-Two pytest markers gate tests out of routine iteration, registered in
+Three pytest markers gate tests out of routine iteration, registered in
 `pyproject.toml`:
 
 - `slow` — exercises real Docling PDF conversion. Just takes time (seconds),
   no external cost.
-- `live_api` — makes real calls to a live LLM provider (Anthropic or Groq).
-  Costs real API quota and can trigger rate-limit backoff lasting minutes to
-  **hours** on a free tier — a single `live_api` run has taken as long as 26
-  minutes under backoff. Never run as part of routine iteration.
+- `live_api` — makes real calls to a live external provider: LLM inference
+  (Anthropic or Groq) or object storage (Backblaze B2). Costs real quota/money
+  and, for the LLM providers, can trigger rate-limit backoff lasting minutes
+  to **hours** on a free tier — a single `live_api` run has taken as long as
+  26 minutes under backoff. Never run as part of routine iteration.
+- `db` — connects to the real Postgres database (Neon, via `DATABASE_URL`)
+  instead of the fast suite's in-memory SQLite. Run deliberately, e.g. after
+  touching `app/storage/models.py` or an Alembic migration — never routinely,
+  since it both requires network access and writes to the real hosted DB.
 
-Day-to-day loop: `pytest -q -m "not slow and not live_api"` — fast, offline,
-safe to run constantly. Full suite including Docling: `pytest -q -m "not
-live_api"`. Everything, including live-API tests: plain `pytest -q`.
+Day-to-day loop: `pytest -q -m "not slow and not live_api and not db"` — fast,
+offline, safe to run constantly. Full suite including Docling:
+`pytest -q -m "not live_api and not db"`. Everything, including live-API and
+real-DB tests: plain `pytest -q`.
 
-Run `live_api` tests **deliberately** — before a release, or after touching
-extraction/grounding logic specifically — never as a matter of course.
-Groq's free-tier rate limits are shared across all usage on the account, so
-if you've been making manual live API calls earlier in the same session
-(debugging, probing quota headroom, running `scripts/inspect_claims.py`
-against real sources), let that cool down before running `live_api` tests —
-otherwise the tests inherit whatever quota exhaustion you already caused and
-can hang for a very long time waiting out backoff that has nothing to do
-with the test itself.
+Run `live_api` and `db` tests **deliberately** — before a release, or after
+touching extraction/grounding logic or the persistence layer specifically —
+never as a matter of course. Groq's free-tier rate limits are shared across
+all usage on the account, so if you've been making manual live API calls
+earlier in the same session (debugging, probing quota headroom, running
+`scripts/inspect_claims.py` against real sources), let that cool down before
+running `live_api` tests — otherwise the tests inherit whatever quota
+exhaustion you already caused and can hang for a very long time waiting out
+backoff that has nothing to do with the test itself.
 
 ## Replace stubs in this exact order
 
