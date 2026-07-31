@@ -92,6 +92,15 @@ class GeneratedAsset(BaseModel):
 class Result(BaseModel):
     """The complete scored output for one profile run."""
 
+    run_id: Optional[str] = Field(
+        None,
+        description="Stable identifier minted at the start of run_pipeline, shared with "
+        "the Claims persisted alongside this Result (passed as `result_id` to "
+        "Repository.save_result/save_claims - see app/storage/repository.py). None when "
+        "a Result was constructed outside run_pipeline (e.g. directly in a test). This is "
+        "what lets a stored Result always be traced back to the exact claim set that "
+        "produced it, not just 'some claims exist somewhere' - see Repository.get_report.",
+    )
     niche: str
     benchmark_version: str = Field(
         ..., description="Which benchmark version produced this score"

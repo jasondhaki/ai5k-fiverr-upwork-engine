@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -64,15 +64,37 @@ async def analyze(
         github_username=github_username or None,
         upwork_text=upwork_text or None,
     )
-    result = run_pipeline(inp)
-    # Persisted through the Repository interface only (app/storage/repository.py),
-    # never raw SQLAlchemy - mirrors how file_store is the only thing that ever
-    # touches disk/object storage. Claims aren't persisted from here yet: run_pipeline
-    # returns the aggregate Result, not the underlying claim list, and threading that
-    # through is out of scope for this pass (Repository.save_claims is already built
-    # and tested independently in tests/test_repository.py for when that's needed).
-    repository.save_result(result)
-    return templates.TemplateResponse(request, "result.html", {"r": result})
+    # Passing `repository` makes run_pipeline persist the Result AND its
+    # originating Claims together, under the single run_id it mints - see
+    # run_pipeline's docstring in pipeline.py. Persisted through the
+    # Repository interface only (app/storage/repository.py), never raw
+    # SQLAlchemy - mirrors how file_store is the only thing that ever
+    # touches disk/object storage.
+    result = run_pipeline(inp, repository=repository)
+    response = templates.TemplateResponse(request, "result.html", {"r": result})
+    # Not surfaced in the UI yet (no template change in this pass) - but
+    # having *some* way to recover run_id from a real request is the whole
+    # point of wiring this at all, so it doesn't only live in the DB.
+    response.headers["X-Run-Id"] = result.run_id
+    return response
+
+
+@app.get("/report/{run_id}")
+def get_report(run_id: str) -> dict:
+    """
+    Retrieve a persisted report by its run_id: the scored Result and the
+    exact Claims that produced it, together. JSON only, no UI yet - the
+    foundation for a future "show me the source" feature, and for auditing
+    what a real run actually produced after the fact.
+    """
+    report = repository.get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"No report found for run_id {run_id!r}")
+    result, claims = report
+    return {
+        "result": result.model_dump(mode="json"),
+        "claims": [claim.model_dump(mode="json") for claim in claims],
+    }
 
 
 @app.get("/health")

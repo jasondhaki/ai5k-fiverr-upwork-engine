@@ -42,8 +42,11 @@ from app.storage.models import BenchmarkRecord, ClaimRecord, ResultRecord
 class Repository(Protocol):
     """The only persistence contract the rest of the system knows about."""
 
-    def save_result(self, result: Result) -> str:
-        """Persist one pipeline run, return its new result_id."""
+    def save_result(self, result: Result, *, result_id: str | None = None) -> str:
+        """Persist one pipeline run, return its result_id. Pass `result_id`
+        explicitly (e.g. run_pipeline's freshly-minted run_id) so the same
+        value can be used for the Claims saved alongside it via save_claims -
+        otherwise one is generated for you."""
         ...
 
     def get_result(self, result_id: str) -> Result | None:
@@ -54,6 +57,15 @@ class Repository(Protocol):
         ...
 
     def get_claims(self, result_id: str) -> list[Claim]:
+        ...
+
+    def get_report(self, result_id: str) -> tuple[Result, list[Claim]] | None:
+        """Everything persisted from one pipeline run: the scored Result and
+        the exact Claims (with source_spans) that produced it - the
+        foundation for a "show me the source" feature, and for auditing what
+        a run actually produced after the fact. None if no Result was ever
+        saved under this id; an empty claims list (not None) if the Result
+        exists but nothing was linked to it via save_claims."""
         ...
 
     def save_benchmark(self, benchmark: Benchmark) -> None:
@@ -78,12 +90,12 @@ class SqlAlchemyRepository:
         self._session_factory = session_factory
 
     # --- results ---------------------------------------------------------
-    def save_result(self, result: Result) -> str:
-        result_id = uuid.uuid4().hex
+    def save_result(self, result: Result, *, result_id: str | None = None) -> str:
+        record_id = result_id or uuid.uuid4().hex
         with self._session_factory() as session:
             session.add(
                 ResultRecord(
-                    id=result_id,
+                    id=record_id,
                     niche=result.niche,
                     benchmark_version=result.benchmark_version,
                     readiness=result.readiness,
@@ -99,7 +111,7 @@ class SqlAlchemyRepository:
                 )
             )
             session.commit()
-        return result_id
+        return record_id
 
     def get_result(self, result_id: str) -> Result | None:
         with self._session_factory() as session:
@@ -107,6 +119,7 @@ class SqlAlchemyRepository:
             if row is None:
                 return None
             return Result(
+                run_id=row.id,
                 niche=row.niche,
                 benchmark_version=row.benchmark_version,
                 readiness=row.readiness,
@@ -169,6 +182,13 @@ class SqlAlchemyRepository:
                 )
                 for row in rows
             ]
+
+    # --- reports (result + its originating claims, by shared id) ----------------
+    def get_report(self, result_id: str) -> tuple[Result, list[Claim]] | None:
+        result = self.get_result(result_id)
+        if result is None:
+            return None
+        return result, self.get_claims(result_id)
 
     # --- benchmarks ----------------------------------------------------------
     def save_benchmark(self, benchmark: Benchmark) -> None:

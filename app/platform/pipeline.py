@@ -18,6 +18,8 @@ Build order for replacing stubs:
 
 from __future__ import annotations
 
+import uuid
+
 from app.evidence import assign_tiers as _assign_tiers
 from app.evidence import load_benchmark as _load_benchmark
 from app.generation import generate_assets as _generate_assets
@@ -33,6 +35,7 @@ from app.schemas import (
 )
 from app.scoring import rank_gaps as _rank_gaps
 from app.scoring import score_profile as _score_profile
+from app.storage.repository import Repository
 
 
 class PipelineInput:
@@ -114,8 +117,28 @@ def generate_assets(claims: list[Claim], benchmark: Benchmark) -> tuple[list[Gen
 
 
 # --- The spine --------------------------------------------------------------
-def run_pipeline(inp: PipelineInput, benchmark_version: str = "2026-07") -> Result:
-    """Runs the whole path. Every stage is now real."""
+def run_pipeline(
+    inp: PipelineInput,
+    benchmark_version: str = "2026-07",
+    repository: Repository | None = None,
+) -> Result:
+    """
+    Runs the whole path. Every stage is now real.
+
+    Mints `run_id` unconditionally, right at the top, before anything else
+    runs - every Result this function returns is self-identifying, whether
+    or not it ends up persisted. Persistence itself only happens when a
+    `repository` is passed in (api.py passes the real singleton;
+    the ~200 existing tests that call run_pipeline directly - with no
+    repository argument - keep working exactly as before, with zero DB
+    access, since that's the default). When a repository IS given, the
+    Claims and the Result are saved under that same run_id (via
+    Repository.save_claims/save_result's `result_id` parameter), so a stored
+    Result can always be traced back to the exact claim set that produced
+    it - not just "some claims exist somewhere". See Repository.get_report.
+    """
+    run_id = uuid.uuid4().hex
+
     claims = extract_claims(inp)
     claims = assign_tiers(claims)
     benchmark = load_benchmark(inp.niche, benchmark_version)
@@ -126,7 +149,8 @@ def run_pipeline(inp: PipelineInput, benchmark_version: str = "2026-07") -> Resu
 
     provable = sum(1 for c in claims if c.publishable)
 
-    return Result(
+    result = Result(
+        run_id=run_id,
         niche=inp.niche,
         # Stamp the version actually used - benchmark.version, not the raw
         # `benchmark_version` argument - so this can never drift from what
@@ -143,3 +167,9 @@ def run_pipeline(inp: PipelineInput, benchmark_version: str = "2026-07") -> Resu
         total_claims=len(claims),
         provable_claims=provable,
     )
+
+    if repository is not None:
+        repository.save_result(result, result_id=run_id)
+        repository.save_claims(claims, result_id=run_id)
+
+    return result

@@ -134,6 +134,22 @@ def test_get_result_returns_none_for_an_unknown_id(repo: SqlAlchemyRepository):
     assert repo.get_result("does-not-exist") is None
 
 
+def test_save_result_honors_an_explicit_result_id(repo: SqlAlchemyRepository):
+    """run_pipeline mints a run_id up front and passes it in explicitly so
+    the Claims saved alongside share it - save_result must use that id
+    verbatim, not silently mint its own."""
+    returned_id = repo.save_result(_sample_result(), result_id="explicit-run-id")
+
+    assert returned_id == "explicit-run-id"
+    assert repo.get_result("explicit-run-id") is not None
+
+
+def test_get_result_round_trips_run_id_onto_the_result(repo: SqlAlchemyRepository):
+    result_id = repo.save_result(_sample_result(), result_id="run-abc")
+    fetched = repo.get_result(result_id)
+    assert fetched.run_id == "run-abc"
+
+
 def test_save_and_get_claims_round_trips_the_source_span_and_date(
     repo: SqlAlchemyRepository,
 ):
@@ -159,6 +175,37 @@ def test_get_claims_only_returns_claims_linked_to_that_result(repo: SqlAlchemyRe
 
     assert len(repo.get_claims(result_a)) == 1
     assert repo.get_claims(result_b) == []
+
+
+def test_get_report_returns_the_result_and_its_claims_together(repo: SqlAlchemyRepository):
+    result_id = repo.save_result(_sample_result(), result_id="run-with-claims")
+    repo.save_claims([_sample_claim()], result_id=result_id)
+
+    report = repo.get_report(result_id)
+
+    assert report is not None
+    result, claims = report
+    assert result.run_id == result_id
+    assert len(claims) == 1
+    assert claims[0].claim_text == "grew sales 20%"
+
+
+def test_get_report_returns_none_when_no_result_was_ever_saved(repo: SqlAlchemyRepository):
+    assert repo.get_report("never-saved") is None
+
+
+def test_get_report_returns_an_empty_claims_list_when_none_were_linked(
+    repo: SqlAlchemyRepository,
+):
+    """A Result can exist with no linked Claims (e.g. save_claims was never
+    called) - that's an empty list, not a missing report."""
+    result_id = repo.save_result(_sample_result())
+
+    report = repo.get_report(result_id)
+
+    assert report is not None
+    _, claims = report
+    assert claims == []
 
 
 def test_save_and_get_benchmark_round_trips(repo: SqlAlchemyRepository):
