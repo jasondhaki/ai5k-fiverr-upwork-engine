@@ -12,12 +12,23 @@
 
   --accent: #0f766e;
   --accent-dark: #0b5c56;
+  --accent-rgb: 15, 118, 110;
   --block: #b91c1c;
   --block-bg: #fef2f2;
   --amber: #92400e;
   --amber-bg: #fffbeb;
   --green: #15803d;
   --green-bg: #f0fdf4;
+  --green-rgb: 21, 128, 61;
+
+  /* The T1->T8 evidence-tier scale (docs/spec.md section 3), strongest to
+     weakest proof - reused anywhere the product wants to gesture at that
+     scale (currently just the tier strip on the input page) without ever
+     hardcoding these three colors inline. */
+  --tier-strong: var(--accent);
+  --tier-mid: var(--amber);
+  --tier-weak: var(--block);
+  --tier-gradient: linear-gradient(to right, var(--tier-strong), var(--tier-mid), var(--tier-weak));
 
   --space-1: 4px;
   --space-2: 8px;
@@ -32,10 +43,16 @@
   --radius-lg: 18px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
   --max-width: 720px;
 }
 
 * { box-sizing: border-box; }
+
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 html, body {
   margin: 0;
@@ -63,6 +80,14 @@ html, body {
   margin-bottom: var(--space-6);
 }
 
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 .wordmark {
   display: inline-block;
   font-size: 15px;
@@ -74,6 +99,34 @@ html, body {
 .wordmark span {
   font-weight: 500;
   color: var(--muted);
+}
+
+/* A quiet "this is a live system" signal, present on every page (see
+   base.html) - deliberately just a status word and a pulsing dot, not
+   anything run-specific (the progress page's activity log already covers
+   "something is happening right now" for an actual run in flight). */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--muted);
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: status-pulse 2.4s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--green-rgb), .45); }
+  50% { box-shadow: 0 0 0 5px rgba(var(--green-rgb), 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot { animation: none; }
 }
 
 .tagline {
@@ -98,15 +151,21 @@ h2 { font-size: 15px; font-weight: 700; margin: var(--space-6) 0 var(--space-3);
 .form-card {
   background: var(--surface);
   border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
 }
 
+/* Labels and every form control read as "data entry," not prose - system
+   monospace stack only, no font file to load. Descriptive sentences (.hint,
+   .tagline, .lead) stay on --font-sans, which is the whole point: the
+   contrast between the two IS the signal. */
 label {
   display: block;
+  font-family: var(--font-mono);
   font-weight: 600;
   margin: var(--space-4) 0 var(--space-2);
-  font-size: 14px;
+  font-size: 13px;
 }
 .form-card label:first-child { margin-top: 0; }
 
@@ -116,15 +175,36 @@ input[type=text], input[type=file], textarea, select {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   font-size: 14px;
-  font-family: inherit;
+  font-family: var(--font-mono);
   background: var(--surface);
   color: var(--ink);
 }
 input:focus, textarea:focus, select:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), .15);
 }
 textarea { min-height: 120px; resize: vertical; }
+
+/* A pure-CSS chevron (two rotated gradient corners) instead of the native
+   arrow, colored with the accent - there's only ever one fixed option in
+   this slice, but it should still read as a deliberately styled control,
+   not a default browser widget with a teal button bolted on elsewhere. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  font-weight: 600;
+  padding-right: 34px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+    linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  background-position:
+    calc(100% - 20px) calc(50% - 3px),
+    calc(100% - 15px) calc(50% - 3px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
 
 .hint {
   color: var(--muted);
@@ -147,11 +227,38 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .primary-action:hover { background: var(--accent-dark); }
 
+/* ---- Evidence-tier scale (input page, ambient) --------------------------- */
+
+.tier-scale {
+  margin-top: var(--space-6);
+}
+.tier-scale-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--tier-gradient);
+}
+.tier-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .02em;
+  color: var(--muted);
+}
+.tier-scale-caption {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 /* ---- Score card / radial readiness indicator ---------------------------- */
 
 .score-card {
   background: var(--surface);
   border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
   margin-bottom: var(--space-2);
@@ -188,8 +295,8 @@ textarea { min-height: 120px; resize: vertical; }
   flex-direction: column;
   align-items: center;
 }
-.score-num { font-size: 38px; font-weight: 800; line-height: 1; color: var(--ink); }
-.score-max { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.score-num { font-family: var(--font-mono); font-size: 38px; font-weight: 800; line-height: 1; color: var(--ink); }
+.score-max { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 .score-ring.zone-low { --ring-color: var(--block); }
 .score-ring.zone-mid { --ring-color: var(--amber); }
@@ -241,7 +348,7 @@ textarea { min-height: 120px; resize: vertical; }
   gap: var(--space-3);
 }
 .dim-name { font-size: 14px; font-weight: 600; }
-.dim-score { font-size: 14px; font-weight: 700; color: var(--accent); }
+.dim-score { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--accent); }
 .dim-bar-track {
   position: relative;
   background: var(--line);
@@ -320,9 +427,9 @@ textarea { min-height: 120px; resize: vertical; }
   padding: var(--space-3) var(--space-4);
 }
 .gap-name { font-size: 14px; font-weight: 600; }
-.gap-range { color: var(--muted); font-size: 13px; grid-column: 1; }
+.gap-range { font-family: var(--font-mono); color: var(--muted); font-size: 13px; grid-column: 1; }
 .gap-priority { text-align: right; }
-.tag-pri { color: var(--accent); font-weight: 700; font-size: 13px; }
+.tag-pri { font-family: var(--font-mono); color: var(--accent); font-weight: 700; font-size: 13px; }
 .gap-intensity-track {
   grid-column: 1 / -1;
   background: var(--line);
@@ -410,6 +517,7 @@ p.lead { color: var(--muted); margin-top: 0; }
   gap: var(--space-6);
 }
 .counter-value {
+  font-family: var(--font-mono);
   font-size: 44px;
   font-weight: 800;
   color: var(--ink);
@@ -436,7 +544,7 @@ p.lead { color: var(--muted); margin-top: 0; }
 .bar-wrap { margin: var(--space-4) 0 0; }
 .bar-track { background: var(--line); border-radius: 6px; height: 8px; overflow: hidden; }
 .bar-fill { background: var(--accent); height: 100%; width: 0%; transition: width .3s ease; }
-.bar-label { font-size: 12px; color: var(--muted); margin-top: var(--space-2); }
+.bar-label { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-top: var(--space-2); }
 
 ul.stages { list-style: none; padding: 0; margin: var(--space-5) 0 0; }
 ul.stages li {
@@ -488,8 +596,11 @@ ul.stages li.active::before {
   100% { transform: scale(1); }
 }
 @keyframes pulse-ring {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(15, 118, 110, .35); }
-  50% { box-shadow: 0 0 0 5px rgba(15, 118, 110, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), .35); }
+  50% { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ul.stages li.active::before { animation: none; }
 }
 
 /* ---- Activity log (progress page) --------------------------------------- */
@@ -513,7 +624,7 @@ ul.stages li.active::before {
 .log-panel-body {
   background: #0d1117;
   color: #c9d1d9;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.7;
   padding: var(--space-3) var(--space-4);
