@@ -1,20 +1,23 @@
 """
-CV parser: native-text PDFs only, via Docling.
+CV parser: native-text PDFs only, via a swappable PdfTextExtractor backend
+(app/ingestion/pdf_extractor.py) - PDF_PARSER=pypdfium2|docling picks which
+one actually runs, mirroring LLM_PROVIDER and STORAGE_BACKEND. Defaults to
+pypdfium2 (the free-tier implementation); Docling remains the layout-aware
+production path CLAUDE.md and docs/spec.md section 2 call for, opt-in via
+PDF_PARSER=docling plus requirements-production.txt.
 
-Docling handles layout-aware text extraction for a handful of common
-single-column resume layouts. Anything it can't pull real text from - a
-scanned image, a password-protected file, a near-empty document - fails
-loudly with a message the freelancer can act on. This sprint does not chase
-OCR or two-column layouts with photos in them.
+Anything that isn't a native-text, in-scope resume - a scanned image, a
+corrupt/unreadable file, a near-empty document - fails loudly with a message
+the freelancer can act on, IDENTICALLY regardless of which backend is
+selected: this module owns that check, neither backend does.
 """
 
 from __future__ import annotations
 
 import logging
-import tempfile
-from pathlib import Path
 
 from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
+from app.ingestion.pdf_extractor import CVParsingError, pdf_text_extractor
 from app.schemas import Claim, SourceType
 from app.storage.store import file_store
 
@@ -24,68 +27,23 @@ PDF_MAGIC = b"%PDF-"
 
 # Below this many characters, treat the extraction as a scanned/unreadable
 # page rather than a thin-but-real resume - real CVs clear this easily.
+# Applied uniformly regardless of which PdfTextExtractor backend produced
+# the text - see that protocol's docstring.
 MIN_EXTRACTED_CHARS = 50
-
-
-class CVParsingError(ValueError):
-    """Raised when a CV can't be parsed. Never swallowed - the caller must
-    surface this to the freelancer rather than silently returning zero claims."""
 
 
 def _looks_like_pdf(cv_bytes: bytes) -> bool:
     return cv_bytes[:5] == PDF_MAGIC
 
 
-def _build_converter():
-    """
-    Docling enables OCR (RapidOCR) by default, which would silently defeat
-    the whole point of the near-empty-text check below: a scanned page would
-    get OCR'd into real-looking text, clear MIN_EXTRACTED_CHARS, and never
-    raise CVParsingError. OCR is out of scope this slice - only the native
-    text layer is read, so a scan reliably comes back near-empty and fails
-    loudly instead of silently "working". This also skips downloading and
-    loading the OCR model weights, which is most of Docling's cold-start cost.
-
-    Table-structure recognition is also disabled: CLAUDE.md scopes this
-    parser to "a handful of common single-column resume layouts" - not
-    tables - so the table-former model is pure memory/CPU overhead here,
-    never exercised by an in-scope document. Cuts real memory (worth doing
-    on a constrained hosted instance) at zero behavior cost for the layouts
-    this parser actually supports.
-    """
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-
-    pipeline_options = PdfPipelineOptions(do_ocr=False, do_table_structure=False)
-    return DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-    )
-
-
 def extract_pdf_text(cv_bytes: bytes) -> str:
     """
-    Run Docling's converter over the PDF bytes and return the document's
-    plain text. Raises CVParsingError if Docling can't load the file or the
-    result looks like a scan (a near-empty text layer).
+    Run the configured PdfTextExtractor (PDF_PARSER) over the PDF bytes and
+    return the document's plain text. Raises CVParsingError if the backend
+    can't load the file at all, or the result looks like a scan (a
+    near-empty text layer).
     """
-    try:
-        converter = _build_converter()
-    except ImportError as exc:
-        raise CVParsingError(
-            "Docling is not installed. Run `pip install docling` "
-            "(see requirements.txt) to enable CV parsing."
-        ) from exc
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "cv.pdf"
-        tmp_path.write_bytes(cv_bytes)
-        try:
-            result = converter.convert(str(tmp_path))
-        except Exception as exc:  # Docling raises a variety of its own errors
-            raise CVParsingError(f"Docling could not parse this PDF: {exc}") from exc
-
-    text = result.document.export_to_text()
+    text = pdf_text_extractor.extract_text(cv_bytes)
     if len(text.strip()) < MIN_EXTRACTED_CHARS:
         raise CVParsingError(
             "This PDF has no meaningful extractable text - it looks like a "
@@ -106,8 +64,8 @@ def parse_cv(cv_bytes: bytes, client: LLMClient | None = None) -> list[Claim]:
     text = extract_pdf_text(cv_bytes)
     # Spans are grounded against `text`, so SourceSpan.document_id must be the
     # text document's id - but the original PDF is retained too, linked to it,
-    # so a Docling upgrade or a "show me page 2" request can always get back
-    # to the untouched source rather than just its current extraction.
+    # so a parser backend switch or upgrade can always get back to the
+    # untouched source rather than just its current extraction.
     pair = file_store.put_source(original=cv_bytes, text=text, original_suffix=".pdf")
 
     llm_client = client or build_default_client()

@@ -13,7 +13,15 @@ fpdf2>=2.8               # generates throwaway PDF fixtures for CV parser tests
 # --- Added as you replace stubs (uncomment when you reach each stage) ------
 
 # Ingestion (M1)
-docling>=2.0             # CV / resume parsing (native-text PDFs only)
+# CV / resume parsing (native-text PDFs only) is behind a swappable backend -
+# app/ingestion/pdf_extractor.py, picked by PDF_PARSER=pypdfium2|docling
+# (default pypdfium2). pypdfium2 alone covers the free-tier default; the
+# layout-aware Docling production path (PDF_PARSER=docling) needs
+# requirements-production.txt installed on top of this file - NOT included
+# here, since docling pulls in torch/opencv (~600MB image size, ~700MB peak
+# memory) that the free-tier default has no use for. See that file, and
+# docs/spec.md's IMPLEMENTATION NOTE at section 2, for the full tradeoff.
+pypdfium2>=4.30
 requests>=2.31           # GitHub / Hugging Face API pulls
 anthropic>=0.39          # LLM extraction via the SDK directly (identity/history/skills passes)
 python-dotenv>=1.0       # loads GITHUB_TOKEN and friends from .env

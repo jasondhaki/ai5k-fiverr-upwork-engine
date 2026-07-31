@@ -2,11 +2,12 @@
 # section for the one-time setup this assumes (Neon DATABASE_URL, a B2
 # bucket, and the env vars below set in Render's dashboard - never here).
 #
-# Docker, not Render's native Python runtime: Docling's [standard] extra
-# needs system libraries (libgl1/libglib2.0-0 for opencv, libgomp1 for
-# torch/onnxruntime) that the native runtime's image doesn't ship and that
-# Render gives no apt access to install. See Dockerfile for the exact
-# packages and why each is there.
+# Docker, not Render's native Python runtime: kept intentionally even though
+# PDF_PARSER=pypdfium2 (the default below) doesn't itself need the system
+# libraries the Dockerfile installs - they're there for the PDF_PARSER=docling
+# production path (Docling's [standard] extra needs libgl1/libglib2.0-0 for
+# opencv, libgomp1 for torch/onnxruntime), which the native Python runtime
+# can't install (no apt access) and Docker can. See Dockerfile's comment.
 services:
   - type: web
     name: ai5k-profile-intelligence
@@ -34,6 +35,8 @@ services:
         sync: false # Neon connection string - set in Render's dashboard
       - key: STORAGE_BACKEND
         value: b2
+      - key: PDF_PARSER
+        value: pypdfium2 # 'docling' needs requirements-production.txt installed too - see Dockerfile
       - key: B2_KEY_ID
         sync: false
       - key: B2_APPLICATION_KEY

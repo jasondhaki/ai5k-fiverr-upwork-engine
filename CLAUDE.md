@@ -68,6 +68,11 @@ broken the product.
   or updates the schema; nothing in `app/storage/` calls
   `Base.metadata.create_all()` against a real database itself.
 - `app/ingestion/span_grounding.py` — the index round-trip. The core invariant.
+- `app/ingestion/pdf_extractor.py` — CV text extraction behind a
+  `PdfTextExtractor` protocol. `pypdfium2` (free-tier default, ~74MB peak) vs
+  `docling` (layout-aware production path, ~786MB peak, needs
+  `requirements-production.txt`). `PDF_PARSER=pypdfium2|docling` picks
+  between them — see "Swappable backends" below.
 - `app/platform/pipeline.py` — the orchestrator. Six stubbed stages.
 - `app/platform/api.py` + `templates/` — the walking skeleton UI.
 - `tests/` — 19 passing tests. Keep them green; add to them.
@@ -75,13 +80,53 @@ broken the product.
 Run the skeleton:  `uvicorn app.platform.api:app --reload`
 Run the tests:     `pytest -q`
 
+## Swappable backends
+
+Three places in this codebase deliberately keep more than one real,
+working implementation behind an interface, and pick which one actually
+runs from an environment variable — never a code change:
+
+| What | Interface | Env var | Free-tier default | Production option |
+|---|---|---|---|---|
+| LLM provider | `LLMClient` (`app/ingestion/extractor.py`) | `LLM_PROVIDER` | either, whichever key is set | `anthropic` or `groq` |
+| File storage | `FileStore` (`app/storage/store.py`) | `STORAGE_BACKEND` | `local` (disk) | `b2` (Backblaze B2) |
+| PDF text extraction | `PdfTextExtractor` (`app/ingestion/pdf_extractor.py`) | `PDF_PARSER` | `pypdfium2` | `docling` (layout-aware) |
+
+The principle: **a production-grade implementation stays in the codebase as
+a real, tested code path — it is never deleted in favor of a leaner one, and
+the leaner one is never a stub standing in for "build this properly later."**
+Both sides are real. Going to production is an environment-variable change
+on an already-working deploy, not a rewrite. This is what let the PDF parser
+move from Docling-only to pypdfium2-default in response to a real hosting
+memory constraint without touching the layout-aware path at all — it's still
+there, still tested, one env var away.
+
+Two things every entry in this table shares, and every new one should:
+
+1. **Fail loudly at startup, not first use, on misconfiguration.** Each
+   singleton is built once at import time (`file_store`, `pdf_text_extractor`)
+   or validated once at API startup (`validate_llm_config`) — an unrecognized
+   value, or a production option selected without its dependency installed,
+   raises immediately with a message naming exactly what's wrong. A
+   misconfigured backend must never look like a successful deploy that fails
+   mysteriously on the first real request.
+2. **Heavy production-only dependencies live in an optional requirements
+   file** (`requirements-production.txt`), installed on top of
+   `requirements.txt`, never inside it — and the code that needs them
+   imports them lazily (inside a constructor or function, never at module
+   top level), so the base install and the fast test suite never require
+   them.
+
 ## Testing conventions
 
 Three pytest markers gate tests out of routine iteration, registered in
 `pyproject.toml`:
 
-- `slow` — exercises real Docling PDF conversion. Just takes time (seconds),
-  no external cost.
+- `slow` — exercises real Docling PDF conversion (only the `docling`-backend
+  half of the CV parser's conformance tests; the `pypdfium2`-backend half,
+  and everything else in `test_cv_parser.py`, is fast and unmarked). Just
+  takes time (seconds) and needs `requirements-production.txt` installed -
+  see "Swappable backends" below - no external cost otherwise.
 - `live_api` — makes real calls to a live external provider: LLM inference
   (Anthropic or Groq) or object storage (Backblaze B2). Costs real quota/money
   and, for the LLM providers, can trigger rate-limit backoff lasting minutes
@@ -116,7 +161,11 @@ renders never changes.
 1. **`extract_claims`** (ingestion, module `app/ingestion/`) — [spec section 2](docs/spec.md#2-data-ingestion)
    Build: deterministic router → per-source parser → parallel LLM extractor.
    - Router is model-free: inspect file type / text layer / size and dispatch.
-   - CV parsing via Docling. Support a handful of common layouts; **fail loudly**
+   - CV parsing behind a swappable `PdfTextExtractor` backend
+     (`app/ingestion/pdf_extractor.py`), picked by
+     `PDF_PARSER=pypdfium2|docling` (defaults to `pypdfium2`) — see
+     "Swappable backends" below and `docs/spec.md`'s `IMPLEMENTATION NOTE`
+     under section 2. Support a handful of common layouts; **fail loudly**
      on anything else with a clear message. Do not chase two-column PDFs with
      photos in them.
    - GitHub via REST/GraphQL. Upwork via pasted-text parse.

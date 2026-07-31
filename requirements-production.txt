@@ -1,0 +1,20 @@
+# Optional, PRODUCTION-ONLY dependencies - layered ON TOP of requirements.txt,
+# not a replacement for it:
+#
+#   pip install -r requirements.txt -r requirements-production.txt
+#
+# Nothing in requirements.txt needs this file; the app runs fully without it
+# (PDF_PARSER defaults to pypdfium2, which needs none of this). Install it
+# only when you're ready to set PDF_PARSER=docling for the layout-aware
+# production CV parser (docs/spec.md section 2, section 10) - without it,
+# constructing DoclingExtractor raises a clear RuntimeError at startup
+# rather than silently falling back to something else (see
+# app/ingestion/pdf_extractor.py).
+#
+# Why this is split out at all: docling pulls in torch and opencv, adding
+# roughly 600MB to the built image and roughly 700MB of peak RAM for a
+# single CV conversion - measured directly, not estimated. That's what
+# OOM-crashed this app's first deploy on Render's Starter plan (512MB). Keep
+# this file uninstalled unless you've also sized the hosting instance for it
+# (Render's Standard tier, 2GB RAM, comfortably covers it).
+docling>=2.0

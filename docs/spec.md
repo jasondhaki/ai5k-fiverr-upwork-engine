@@ -114,6 +114,17 @@ Classification is cheap and deterministic. Only the expensive parsers see docume
 >
 > Without this check the profile fills with garbage, and the failure is silent.
 
+> **IMPLEMENTATION NOTE — CV parsing defaults to pypdfium2, not Docling, on the free-tier deploy**
+>
+> The row above and section 10's tool stack both name Docling for document parsing. That was implemented, deployed, and **found to OOM-crash the hosted demo**: a single CV conversion through Docling's layout-aware pipeline (torch + the docling-ibm-models layout model) peaks at ~786MB of RAM, measured directly — comfortably over the ~512MB a free-tier hosting instance provides, and enough to take down the whole running service, not just that one request.
+>
+> The implementation now sits behind a `PdfTextExtractor` protocol (`app/ingestion/pdf_extractor.py`) with two backends, selected by `PDF_PARSER=pypdfium2|docling`:
+>
+> - **`pypdfium2` (the default)** — plain native-text-layer extraction, no layout model, no OCR, no torch. Measured at ~74MB peak for the same document — about a tenth of Docling's footprint. Tested directly against a real multi-project CV (`data/samples/your_cv.pdf`): the content extracted is substantively identical to Docling's, and for that single-column layout the reading order matches exactly, line for line. The tradeoff is real but narrower than it first sounds: **layout awareness is lost**, so a genuinely multi-column resume could come back with columns interleaved rather than read in visual order — this parser was already scoped (see section 2's "documents" row and CLAUDE.md) to a handful of common single-column layouts, where plain extraction order and reading order coincide.
+> - **`docling`** — the original, layout-aware design described above, unchanged in behavior, kept as a real second implementation rather than deleted. Opt in via `PDF_PARSER=docling` once the hosting instance has enough memory for it (Render's Standard tier, 2GB, comfortably covers the measured ~786MB); requires `requirements-production.txt` installed alongside the base requirements, since docling pulls in torch and opencv that the free-tier default has no use for.
+>
+> This is the same "swappable backend, chosen by an environment variable" pattern already used for the LLM provider and the file storage backend — see CLAUDE.md's "Swappable backends" section.
+
 ### Extraction
 
 Extraction runs as several small parallel calls rather than one large one, with a separate specialised prompt for identity, for work history, and for skills and proof. Splitting the task improves accuracy and reduces latency at the same time, because a single prompt asking a model to identify many kinds of information at once performs worse at all of them.

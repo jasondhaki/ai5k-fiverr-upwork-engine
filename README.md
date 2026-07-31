@@ -91,15 +91,18 @@ Render's dashboard for the hosted deploy (see "Deploying to Render" below).
 | `B2_APPLICATION_KEY` | Backblaze B2 application key | `STORAGE_BACKEND=b2` |
 | `B2_ENDPOINT` | B2 S3-compatible endpoint, bare hostname (e.g. `s3.us-east-005.backblazeb2.com`) - the `https://` scheme is prepended in code, not stored here | `STORAGE_BACKEND=b2` |
 | `B2_BUCKET_NAME` | B2 bucket name | `STORAGE_BACKEND=b2` |
+| `PDF_PARSER` | `pypdfium2` or `docling` - picks the CV text-extraction backend | Defaults to `pypdfium2` (free-tier, ~74MB peak); `docling` (~786MB peak, layout-aware) needs `requirements-production.txt` installed and enough RAM (Render Standard tier or above) |
 
 ## Deploying to Render
 
-The service deploys as a Docker image (`render.yaml` + `Dockerfile`), not
-Render's native Python runtime - Docling's `[standard]` extra pulls in torch,
-onnxruntime, and opencv, which need system libraries (`libgl1`,
-`libglib2.0-0`, `libgomp1`) the native runtime's image doesn't ship and gives
-no way to install. See the Dockerfile's comments for exactly why each package
-is there.
+The service deploys as a Docker image (`render.yaml` + `Dockerfile`), kept
+intentionally even though the default `PDF_PARSER=pypdfium2` doesn't itself
+need it: the system libraries the Dockerfile installs (`libgl1`,
+`libglib2.0-0`, `libgomp1`) exist for the `PDF_PARSER=docling` production
+path (Docling's `[standard]` extra pulls in torch, onnxruntime, and opencv,
+which need them, and Render's native Python runtime gives no way to install
+them). See the Dockerfile's comments for exactly why each package is there,
+and CLAUDE.md's "Swappable backends" section for the PDF_PARSER tradeoff.
 
 One-time setup before the first deploy:
 
