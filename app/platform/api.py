@@ -36,6 +36,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config.weights import validate_config
@@ -58,8 +59,10 @@ validate_llm_config()
 
 app = FastAPI(title="AI5K Profile Intelligence - Working Slice")
 
-TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMPLATES_DIR = REPO_ROOT / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+app.mount("/static", StaticFiles(directory=str(REPO_ROOT / "static")), name="static")
 
 DEFAULT_NICHE = "SMB workflow automation"
 
@@ -155,7 +158,13 @@ def analyze_result(request: Request, run_id: str) -> HTMLResponse:
     result = repository.get_result(run_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No result found for run_id {run_id!r}")
-    return templates.TemplateResponse(request, "result.html", {"r": result})
+    # Presentation-only: lets the dimension bars show a benchmark-target
+    # marker for any dimension that also has a ranked gap, without changing
+    # what Result itself carries.
+    gap_targets = {g.dimension: g.target for g in result.gaps}
+    return templates.TemplateResponse(
+        request, "result.html", {"r": result, "gap_targets": gap_targets}
+    )
 
 
 @app.get("/report/{run_id}")

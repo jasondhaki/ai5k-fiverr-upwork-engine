@@ -194,7 +194,9 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     # now only reachable once the background run has actually finished.
     result_page = client.get(f"/analyze/{run_id}/result")
     assert result_page.status_code == 200
-    assert "Profile Readiness" in result_page.text
+    # Checks the underlying data made it onto the page, not exact markup -
+    # matches the claims_found/claims_provable counts asserted above.
+    assert "can prove 1" in result_page.text
 
 
 # --- /report/{run_id}: unchanged JSON contract -------------------------------

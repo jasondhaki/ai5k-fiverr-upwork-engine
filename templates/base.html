@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AI5K Profile Intelligence{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="site-header">
+      <a class="wordmark" href="/">AI5K <span>Profile Intelligence</span></a>
+      {% block tagline %}{% endblock %}
+    </header>
+
+    <main class="site-main">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="site-footer">
+      Every claim traced to a source span &mdash; nothing on this page is invented.
+    </footer>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,95 +1,107 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Profile Readiness &middot; {{ r.niche }}</title>
-  <style>
-    :root { --ink:#1f2a44; --muted:#6b7280; --line:#e5e7eb; --accent:#0f766e;
-            --block:#b91c1c; --block-bg:#fef2f2; --amber:#b45309; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-           color: var(--ink); max-width: 720px; margin: 0 auto; padding: 40px 24px; line-height: 1.5; }
-    .score-card { border:1px solid var(--line); border-radius:12px; padding:24px; margin-bottom:28px; }
-    .readiness { font-size: 15px; letter-spacing:.02em; color: var(--muted); text-transform:uppercase; }
-    .readiness b { color: var(--ink); font-size: 28px; }
-    .cap-note { color: var(--block); font-size: 13px; margin-top: 4px; }
-    .framing { font-size: 15px; margin: 8px 0 0; }
-    table { width:100%; border-collapse: collapse; margin: 8px 0 28px; }
-    th { text-align:left; font-size:12px; text-transform:uppercase; color:var(--muted);
-         border-bottom:1px solid var(--line); padding:8px 6px; }
-    td { padding:10px 6px; border-bottom:1px solid var(--line); font-size:14px; vertical-align:top; }
-    .blocking td { background: var(--block-bg); }
-    .tag-block { color: var(--block); font-weight:700; font-size:12px; }
-    .tag-pri { color: var(--accent); font-weight:700; }
-    h2 { font-size: 16px; margin: 28px 0 8px; }
-    .asset { border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
-    .asset .kind { font-size:12px; text-transform:uppercase; color:var(--muted); }
-    .unvalidated { color: var(--amber); font-size:12px; }
-    .back { display:inline-block; margin-top: 24px; color: var(--accent); text-decoration:none; font-weight:600; }
-  </style>
-</head>
-<body>
-  <div class="score-card">
-    <div class="readiness">Profile Readiness &nbsp; <b>{{ r.readiness|int }}</b> / 100</div>
-    {% if r.capped %}<div class="cap-note">{{ r.cap_note }}</div>{% endif %}
+{% extends "base.html" %}
+
+{% block title %}Profile Readiness &middot; {{ r.niche }}{% endblock %}
+
+{% block content %}
+{% set zone = 'zone-low' if r.readiness < 40 else ('zone-mid' if r.readiness < 70 else 'zone-strong') %}
+<div class="score-card">
+  <div class="score-ring {{ zone }}" style="--pct: {{ r.readiness }};">
+    <div class="score-ring-value">
+      <span class="score-num">{{ r.readiness|int }}</span>
+      <span class="score-max">/ 100</span>
+    </div>
+  </div>
+  <div class="score-body">
+    <div class="readiness-label">Profile readiness</div>
     <p class="framing">
       You have {{ r.total_claims }} claim{{ '' if r.total_claims == 1 else 's' }}
       and can prove {{ r.provable_claims }}. Below is the fastest route to proving more.
     </p>
+    {% if r.capped %}<div class="honest-note">{{ r.cap_note }}</div>{% endif %}
   </div>
+</div>
 
-  <h2>Dimensions</h2>
-  <table>
-    <thead><tr><th>Dimension</th><th>You now</th><th>Score</th></tr></thead>
-    <tbody>
-      {% for d in r.dimensions %}
-      <tr>
-        <td>{{ d.name.replace('_', ' ')|title }}</td>
-        <td>{{ d.detail or '' }}</td>
-        <td>{{ d.score|int }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if r.blocking %}
-  <h2>Fix before publishing</h2>
-  <table>
-    <tbody>
-      {% for b in r.blocking %}
-      <tr class="blocking">
-        <td><span class="tag-block">BLOCKING</span></td>
-        <td colspan="2">{{ b.description }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
-
-  <h2>Top gaps &mdash; ranked by points per hour</h2>
-  <table>
-    <thead><tr><th>Dimension</th><th>Now &rarr; target</th><th>Priority</th></tr></thead>
-    <tbody>
-      {% for g in r.gaps %}
-      <tr>
-        <td>{{ g.dimension.replace('_', ' ')|title }}</td>
-        <td>{{ g.current|int }} &rarr; {{ g.target|int }}</td>
-        <td><span class="tag-pri">{{ '%.1f'|format(g.priority) }} pts/hr</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  <h2>Rewritten profile</h2>
-  {% for a in r.generated %}
-  <div class="asset">
-    <div class="kind">{{ a.kind }}</div>
-    <div>{{ a.text }}</div>
-    {% if not a.validated %}<div class="unvalidated">&#9888; not yet span-validated (stub)</div>{% endif %}
+<h2>Dimensions</h2>
+<div class="dim-list">
+  {% for d in r.dimensions %}
+  <div class="dim-card">
+    <div class="dim-head">
+      <span class="dim-name">{{ d.name.replace('_', ' ')|title }}</span>
+      <span class="dim-score">{{ d.score|int }}</span>
+    </div>
+    <div class="dim-bar-track">
+      <div class="dim-bar-fill" style="width: {{ d.score }}%;"></div>
+      {% if gap_targets and gap_targets.get(d.name) %}
+      <div class="dim-bar-target" style="left: {{ gap_targets[d.name] }}%;" title="Benchmark target: {{ gap_targets[d.name]|int }}"></div>
+      {% endif %}
+    </div>
+    {% if d.detail %}<div class="dim-detail">{{ d.detail }}</div>{% endif %}
   </div>
   {% endfor %}
+</div>
 
-  <a class="back" href="/">&larr; Analyze another profile</a>
-</body>
-</html>
+{% if r.blocking %}
+<h2>Fix before publishing</h2>
+<div class="blocking-list">
+  {% for b in r.blocking %}
+  <div class="blocking-item">
+    <svg class="warn-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.5 1.5 21.5h21z" fill="currentColor"/>
+      <rect x="11.1" y="9" width="1.8" height="6.2" fill="#fff"/>
+      <rect x="11.1" y="16.6" width="1.8" height="1.8" fill="#fff"/>
+    </svg>
+    <div>
+      <span class="tag-block">Fix this first</span>
+      {% if b.dimension %}<span class="dim-tag">{{ b.dimension.replace('_', ' ')|title }}</span>{% endif %}
+      <p>{{ b.description }}</p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if r.gaps %}
+{% set max_priority = r.gaps | map(attribute='priority') | max %}
+<h2>Top gaps &mdash; ranked by points per hour</h2>
+<div class="gap-list">
+  {% for g in r.gaps %}
+  <div class="gap-row">
+    <span class="gap-name">{{ g.dimension.replace('_', ' ')|title }}</span>
+    <span class="gap-priority"><span class="tag-pri">{{ '%.1f'|format(g.priority) }} pts/hr</span></span>
+    <span class="gap-range">{{ g.current|int }} &rarr; {{ g.target|int }}</span>
+    <div class="gap-intensity-track">
+      <div class="gap-intensity-fill" style="width: {{ ((g.priority / max_priority) * 100) if max_priority else 0 }}%;"></div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if r.generated or r.generation_incomplete %}
+<h2>Rewritten profile</h2>
+<div class="preview-card">
+  <div class="preview-card-chrome">
+    <span class="preview-dot"></span><span class="preview-dot"></span><span class="preview-dot"></span>
+    <span class="preview-label">Upwork profile preview</span>
+  </div>
+  {% for a in r.generated %}
+  <div class="preview-block">
+    <div class="preview-kind">{{ a.kind }}</div>
+    <div class="preview-text">{{ a.text }}</div>
+    {% if a.validated %}<span class="badge-validated">&#10003; Verified against source</span>{% endif %}
+  </div>
+  {% endfor %}
+  {% if r.generation_incomplete %}
+  <div class="preview-block">
+    <div class="honest-note" style="margin-top:0;">
+      Generation didn't produce a full result this run, so nothing is shown
+      here rather than a fabricated placeholder. Nothing else on this page is
+      affected &mdash; try again once you've added more provable claims.
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<a class="back" href="/">&larr; Analyze another profile</a>
+{% endblock %}

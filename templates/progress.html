@@ -1,160 +1,146 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Analyzing your profile &middot; Profile Intelligence</title>
-  <style>
-    :root { --ink:#1f2a44; --muted:#6b7280; --line:#e5e7eb; --accent:#0f766e;
-            --block:#b91c1c; --block-bg:#fef2f2; --amber:#b45309; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-           color: var(--ink); max-width: 640px; margin: 0 auto; padding: 48px 24px; line-height: 1.5; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    p.lead { color: var(--muted); margin-top: 0; }
+{% extends "base.html" %}
 
-    .score-card { border:1px solid var(--line); border-radius:12px; padding:24px; margin: 28px 0; }
-    .counters { display:flex; gap:40px; }
-    .counter-value { font-size:36px; font-weight:700; color:var(--ink); line-height:1.1; }
-    .counter-label { font-size:12px; text-transform:uppercase; letter-spacing:.02em; color:var(--muted); margin-top:2px; }
-    .detail { margin-top:16px; font-size:13px; color:var(--muted); min-height:16px; }
+{% block title %}Analyzing your profile &middot; AI5K Profile Intelligence{% endblock %}
 
-    .bar-wrap { margin: 18px 0 0; }
-    .bar-track { background: var(--line); border-radius:6px; height:8px; overflow:hidden; }
-    .bar-fill { background: var(--accent); height:100%; width:0%; transition: width .3s ease; }
-    .bar-label { font-size:12px; color:var(--muted); margin-top:6px; }
+{% block content %}
+<h1>Analyzing your profile</h1>
+<p class="lead">This runs a few real LLM calls end to end - usually seconds, occasionally longer if a provider rate-limits us.</p>
 
-    ul.stages { list-style:none; padding:0; margin:0; }
-    ul.stages li { padding:8px 0 8px 30px; position:relative; font-size:14px; color:var(--muted); }
-    ul.stages li::before {
-      content:"○"; position:absolute; left:0; top:8px; color: var(--line); font-size:14px; }
-    ul.stages li.done { color: var(--ink); }
-    ul.stages li.done::before { content:"\2713"; color: var(--accent); font-weight:700; }
-    ul.stages li.active { color: var(--ink); font-weight:600; }
-    ul.stages li.active::before { content:"\2022"; color: var(--accent); font-size:20px; top:4px; }
-
-    .error-box { background: var(--block-bg); color: var(--block); border-radius:10px;
-                 padding:16px; margin-top:20px; font-size:14px; }
-    .error-box strong { display:block; margin-bottom:4px; }
-
-    .back { display:inline-block; margin-top: 24px; color: var(--accent); text-decoration:none; font-weight:600; }
-  </style>
-</head>
-<body>
-  <h1>Analyzing your profile</h1>
-  <p class="lead">This runs a few real LLM calls end to end - usually seconds, occasionally longer if a provider rate-limits us.</p>
-
-  <div class="score-card">
-    <div class="counters">
-      <div>
-        <div class="counter-value" id="claims-found">0</div>
-        <div class="counter-label">Claims found</div>
-      </div>
-      <div>
-        <div class="counter-value" id="claims-provable">0</div>
-        <div class="counter-label">Provable</div>
-      </div>
+<div class="score-card" style="flex-direction: column; align-items: stretch;">
+  <div class="counters">
+    <div>
+      <div class="counter-value" id="claims-found">0</div>
+      <div class="counter-label">Claims found</div>
     </div>
-
-    <div class="bar-wrap" id="progress-bar-wrap" style="display:none;">
-      <div class="bar-track"><div class="bar-fill" id="progress-bar-fill"></div></div>
-      <div class="bar-label" id="progress-bar-label"></div>
+    <div class="counter-provable">
+      <div class="counter-value" id="claims-provable">0</div>
+      <div class="counter-label">Provable</div>
     </div>
-
-    <div class="detail" id="detail"></div>
   </div>
 
-  <ul class="stages" id="stage-list"></ul>
-
-  <div class="error-box" id="error-box" style="display:none;">
-    <strong>Something went wrong</strong>
-    <span id="error-message"></span>
+  <div class="bar-wrap" id="progress-bar-wrap" style="display:none;">
+    <div class="bar-track"><div class="bar-fill" id="progress-bar-fill"></div></div>
+    <div class="bar-label" id="progress-bar-label"></div>
   </div>
 
-  <a class="back" href="/">&larr; Start over</a>
+  <div class="detail" id="detail"></div>
+</div>
 
-  <script>
-    var runId = {{ run_id | tojson }};
+<ul class="stages" id="stage-list"></ul>
 
-    var STAGES = [
-      { key: "parsing_cv", label: "Reading CV" },
-      { key: "fetching_repos", label: "Fetching GitHub repos" },
-      { key: "extracting_claims", label: "Extracting claims" },
-      { key: "assigning_tiers", label: "Assigning evidence tiers" },
-      { key: "scoring", label: "Scoring profile" },
-      { key: "generating", label: "Generating title & overview" }
-    ];
+<div class="error-box" id="error-box" style="display:none;">
+  <strong>Something went wrong</strong>
+  <span id="error-message"></span>
+</div>
 
-    var stageListEl = document.getElementById("stage-list");
-    STAGES.forEach(function (s) {
-      var li = document.createElement("li");
-      li.textContent = s.label;
-      li.id = "stage-" + s.key;
-      stageListEl.appendChild(li);
+<a class="back" href="/">&larr; Start over</a>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var runId = {{ run_id | tojson }};
+
+  var STAGES = [
+    { key: "parsing_cv", label: "Reading CV" },
+    { key: "fetching_repos", label: "Fetching GitHub repos" },
+    { key: "extracting_claims", label: "Extracting claims" },
+    { key: "assigning_tiers", label: "Assigning evidence tiers" },
+    { key: "scoring", label: "Scoring profile" },
+    { key: "generating", label: "Generating title & overview" }
+  ];
+
+  var stageListEl = document.getElementById("stage-list");
+  STAGES.forEach(function (s) {
+    var li = document.createElement("li");
+    li.textContent = s.label;
+    li.id = "stage-" + s.key;
+    stageListEl.appendChild(li);
+  });
+
+  function stageIndex(stage) {
+    if (stage === "queued") return -1;
+    if (stage === "done" || stage === "error") return STAGES.length;
+    for (var i = 0; i < STAGES.length; i++) {
+      if (STAGES[i].key === stage) return i;
+    }
+    return -1;
+  }
+
+  // Small count-up so the "provable" number climbing reads as something
+  // happening live, not a value that silently jumps on each poll.
+  var displayedCounts = { "claims-found": 0, "claims-provable": 0 };
+  function animateCount(elId, target) {
+    var el = document.getElementById(elId);
+    var start = displayedCounts[elId];
+    if (start === target) return;
+    var startTime = null;
+    var duration = 400;
+    function step(ts) {
+      if (startTime === null) startTime = ts;
+      var progress = Math.min((ts - startTime) / duration, 1);
+      var value = Math.round(start + (target - start) * progress);
+      el.textContent = value;
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        displayedCounts[elId] = target;
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  var pollHandle = null;
+
+  function render(status) {
+    animateCount("claims-found", status.claims_found);
+    animateCount("claims-provable", status.claims_provable);
+    document.getElementById("detail").textContent = status.detail || "";
+
+    var barWrap = document.getElementById("progress-bar-wrap");
+    if (status.progress_total) {
+      barWrap.style.display = "block";
+      var pct = Math.round((status.progress_current / status.progress_total) * 100);
+      document.getElementById("progress-bar-fill").style.width = pct + "%";
+      document.getElementById("progress-bar-label").textContent =
+        status.progress_current + " / " + status.progress_total;
+    } else {
+      barWrap.style.display = "none";
+    }
+
+    if (status.stage === "error") {
+      // Deliberately does NOT touch the checklist below: `stage` is now
+      // literally "error", overwriting whatever real stage was running
+      // when it failed, so recomputing checklist state from it would show
+      // every step as falsely "done". Leaving the checklist exactly as
+      // the last successful poll rendered it - i.e. frozen at the real
+      // point of failure - is more honest than that.
+      document.getElementById("error-box").style.display = "block";
+      document.getElementById("error-message").textContent =
+        status.error || "The run failed for an unknown reason.";
+      if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      return;
+    }
+
+    var idx = stageIndex(status.stage);
+    STAGES.forEach(function (s, i) {
+      var li = document.getElementById("stage-" + s.key);
+      li.className = i < idx ? "done" : (i === idx ? "active" : "");
     });
 
-    function stageIndex(stage) {
-      if (stage === "queued") return -1;
-      if (stage === "done" || stage === "error") return STAGES.length;
-      for (var i = 0; i < STAGES.length; i++) {
-        if (STAGES[i].key === stage) return i;
-      }
-      return -1;
+    if (status.stage === "done") {
+      if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      window.location.href = "/analyze/" + runId + "/result";
     }
+  }
 
-    var pollHandle = null;
+  function poll() {
+    fetch("/analyze/" + runId + "/status")
+      .then(function (res) { return res.json(); })
+      .then(render)
+      .catch(function () { /* transient network hiccup - next poll retries */ });
+  }
 
-    function render(status) {
-      document.getElementById("claims-found").textContent = status.claims_found;
-      document.getElementById("claims-provable").textContent = status.claims_provable;
-      document.getElementById("detail").textContent = status.detail || "";
-
-      var barWrap = document.getElementById("progress-bar-wrap");
-      if (status.progress_total) {
-        barWrap.style.display = "block";
-        var pct = Math.round((status.progress_current / status.progress_total) * 100);
-        document.getElementById("progress-bar-fill").style.width = pct + "%";
-        document.getElementById("progress-bar-label").textContent =
-          status.progress_current + " / " + status.progress_total;
-      } else {
-        barWrap.style.display = "none";
-      }
-
-      if (status.stage === "error") {
-        // Deliberately does NOT touch the checklist below: `stage` is now
-        // literally "error", overwriting whatever real stage was running
-        // when it failed, so recomputing checklist state from it would show
-        // every step as falsely "done". Leaving the checklist exactly as
-        // the last successful poll rendered it - i.e. frozen at the real
-        // point of failure - is more honest than that.
-        document.getElementById("error-box").style.display = "block";
-        document.getElementById("error-message").textContent =
-          status.error || "The run failed for an unknown reason.";
-        if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
-        return;
-      }
-
-      var idx = stageIndex(status.stage);
-      STAGES.forEach(function (s, i) {
-        var li = document.getElementById("stage-" + s.key);
-        li.className = i < idx ? "done" : (i === idx ? "active" : "");
-      });
-
-      if (status.stage === "done") {
-        if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
-        window.location.href = "/analyze/" + runId + "/result";
-      }
-    }
-
-    function poll() {
-      fetch("/analyze/" + runId + "/status")
-        .then(function (res) { return res.json(); })
-        .then(render)
-        .catch(function () { /* transient network hiccup - next poll retries */ });
-    }
-
-    poll();
-    pollHandle = setInterval(poll, 1500);
-  </script>
-</body>
-</html>
+  poll();
+  pollHandle = setInterval(poll, 1500);
+</script>
+{% endblock %}

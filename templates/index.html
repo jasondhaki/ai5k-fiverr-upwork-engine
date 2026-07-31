@@ -1,47 +1,29 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Profile Intelligence &middot; Working Slice</title>
-  <style>
-    :root { --ink:#1f2a44; --muted:#6b7280; --line:#e5e7eb; --accent:#0f766e; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-           color: var(--ink); max-width: 640px; margin: 0 auto; padding: 48px 24px; line-height: 1.5; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    p.lead { color: var(--muted); margin-top: 0; }
-    label { display:block; font-weight:600; margin: 20px 0 6px; font-size: 14px; }
-    input[type=text], textarea, select {
-      width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; font-family:inherit; }
-    textarea { min-height: 120px; resize: vertical; }
-    button { margin-top: 28px; background: var(--accent); color:#fff; border:0; padding:12px 20px;
-             border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; }
-    .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  </style>
-</head>
-<body>
-  <h1>Profile Intelligence</h1>
-  <p class="lead">One niche, three sources, end to end. Every number traced to where it came from.</p>
+{% extends "base.html" %}
 
-  <form action="/analyze" method="post" enctype="multipart/form-data">
-    <label for="niche">Niche</label>
-    <select id="niche" name="niche">
-      <option value="{{ niche }}" selected>{{ niche }}</option>
-    </select>
+{% block title %}AI5K Profile Intelligence{% endblock %}
 
-    <label for="cv">CV or resume (PDF)</label>
-    <input type="file" id="cv" name="cv" accept=".pdf,.docx">
-    <div class="hint">Native PDFs only in the slice. Scans are rejected loudly.</div>
+{% block tagline %}
+<p class="tagline">One niche, three sources, end to end. Every number traced to where it came from.</p>
+{% endblock %}
 
-    <label for="github_username">GitHub username</label>
-    <input type="text" id="github_username" name="github_username" placeholder="e.g. octocat">
+{% block content %}
+<form class="form-card" action="/analyze" method="post" enctype="multipart/form-data">
+  <label for="niche">Niche</label>
+  <select id="niche" name="niche">
+    <option value="{{ niche }}" selected>{{ niche }}</option>
+  </select>
 
-    <label for="upwork_text">Existing Upwork profile text</label>
-    <textarea id="upwork_text" name="upwork_text" placeholder="Select your profile text and paste it here"></textarea>
-    <div class="hint">You paste it yourself &mdash; nothing is scraped on your behalf.</div>
+  <label for="cv">CV or resume (PDF)</label>
+  <input type="file" id="cv" name="cv" accept=".pdf,.docx">
+  <div class="hint">Native PDFs only in the slice. Scans are rejected loudly.</div>
 
-    <button type="submit">Analyze my profile</button>
-  </form>
-</body>
-</html>
+  <label for="github_username">GitHub username</label>
+  <input type="text" id="github_username" name="github_username" placeholder="e.g. octocat">
+
+  <label for="upwork_text">Existing Upwork profile text</label>
+  <textarea id="upwork_text" name="upwork_text" placeholder="Select your profile text and paste it here"></textarea>
+  <div class="hint">You paste it yourself &mdash; nothing is scraped on your behalf.</div>
+
+  <button type="submit" class="primary-action">Analyze my profile</button>
+</form>
+{% endblock %}
