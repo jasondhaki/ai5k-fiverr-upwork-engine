@@ -110,8 +110,9 @@ One-time setup before the first deploy:
    `LLM_PROVIDER`, `ANTHROPIC_API_KEY`/`GROQ_API_KEY`, `GITHUB_TOKEN`) -
    these are deliberately not committed anywhere in this repo.
 
-Every deploy runs `alembic upgrade head` against `DATABASE_URL` first (see
-`render.yaml`'s `preDeployCommand`), so schema changes ship with the code that
+Every deploy runs `python -m alembic upgrade head` against `DATABASE_URL` first
+(see `render.yaml`'s `preDeployCommand` - the `python -m` form matters on
+Linux, see the comment there) so schema changes ship with the code that
 needs them. `STORAGE_BACKEND=b2` is set in `render.yaml` itself (not a
 secret) so the hosted service uses Backblaze B2 rather than local disk, which
 wouldn't survive a redeploy anyway.

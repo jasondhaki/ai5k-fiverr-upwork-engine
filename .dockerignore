@@ -1,0 +1,20 @@
+# Without this file, `COPY . .` in the Dockerfile bakes these into the image
+# layers - most importantly .env, which holds real secrets (GROQ_API_KEY,
+# DATABASE_URL, B2 credentials). Render env vars come from its dashboard, not
+# a copied .env, so it's never needed in the image. Mirrors .gitignore, plus
+# Docker-specific exclusions (.git, tests/ artifacts) that git doesn't need
+# to know about but the image build shouldn't ship either.
+.venv/
+venv/
+.env
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+data/uploads/*
+!data/uploads/.gitkeep
+data/app.db
+claims_output.txt

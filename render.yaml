@@ -17,7 +17,18 @@ services:
     # Runs `alembic upgrade head` before each deploy goes live, so schema
     # changes ship in lockstep with the code that needs them rather than
     # requiring a separate manual migration step against Neon.
-    preDeployCommand: alembic upgrade head
+    #
+    # Deliberately `python -m alembic`, not bare `alembic`: alembic/env.py
+    # does `from app.storage.db import ...`, which needs the repo root
+    # (/app) on sys.path. `python -m alembic` guarantees that (Python always
+    # adds the current working directory for `-m` invocations). A bare
+    # `alembic` on Linux runs the installed console-script shim directly,
+    # whose sys.path[0] is the shim's OWN directory (e.g. /usr/local/bin),
+    # not /app - that raises ModuleNotFoundError: No module named 'app' the
+    # moment env.py's import runs. (This only surfaces on Linux - Windows'
+    # pip-generated .exe launcher adds the cwd itself, which is why testing
+    # locally on this repo's dev machine would not have caught it.)
+    preDeployCommand: python -m alembic upgrade head
     envVars:
       - key: DATABASE_URL
         sync: false # Neon connection string - set in Render's dashboard
