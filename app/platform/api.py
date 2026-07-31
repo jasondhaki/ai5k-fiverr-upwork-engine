@@ -31,6 +31,7 @@ Then open http://127.0.0.1:8000
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from pathlib import Path
 
@@ -140,11 +141,23 @@ def analyze_progress(request: Request, run_id: str) -> HTMLResponse:
 def analyze_status(run_id: str) -> dict:
     """What the progress page polls. 404 for a run_id nobody ever created -
     distinct from a run that's merely still queued/running, which is a
-    normal 200 with stage='queued' or whatever it's currently doing."""
+    normal 200 with stage='queued' or whatever it's currently doing.
+
+    Replaces the stored absolute `rate_limit_resume_at` with a freshly
+    computed `rate_limit_seconds_remaining` on every call, against this
+    server's own clock - the browser's clock is never asked to agree with
+    it, so a slow poll or a backgrounded tab never produces a stale or
+    negative countdown on the progress page.
+    """
     status = status_store.get(run_id)
     if status is None:
         raise HTTPException(status_code=404, detail=f"No run found for run_id {run_id!r}")
-    return status.model_dump(mode="json")
+    body = status.model_dump(mode="json")
+    resume_at = body.pop("rate_limit_resume_at")
+    body["rate_limit_seconds_remaining"] = (
+        max(0.0, resume_at - time.time()) if resume_at is not None else None
+    )
+    return body
 
 
 @app.get("/analyze/{run_id}/result", response_class=HTMLResponse)

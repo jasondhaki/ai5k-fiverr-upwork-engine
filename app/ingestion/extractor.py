@@ -204,6 +204,7 @@ class GroqClient:
         self._sleep = sleep
 
     def complete(self, *, system: str, prompt: str) -> str:
+        was_rate_limited = False
         for attempt in range(GROQ_MAX_ATTEMPTS):
             response = self._http.post(
                 GROQ_API,
@@ -233,7 +234,16 @@ class GroqClient:
                     )
                     status_callback = _status_callback.get()
                     if status_callback is not None:
-                        status_callback(detail=f"waiting {delay:.0f}s (API rate limit)")
+                        # A calm, number-free sentence - api.py's status
+                        # endpoint recomputes the actual remaining seconds
+                        # fresh from rate_limit_resume_at on every poll, so
+                        # the progress page never has to parse a number back
+                        # out of this text (see RunStatus.rate_limit_resume_at).
+                        status_callback(
+                            detail="Rate-limited by the AI provider - waiting to retry",
+                            rate_limit_resume_at=time.time() + delay,
+                        )
+                    was_rate_limited = True
                     self._sleep(delay)
                     continue
                 logger.error(
@@ -242,6 +252,14 @@ class GroqClient:
                     "say when it resets): %s",
                     _source_label.get(), GROQ_MAX_ATTEMPTS, headers or "(none returned)",
                 )
+            if was_rate_limited:
+                # Clears the countdown regardless of whether this attempt is
+                # the eventual success or the final, still-429 attempt that's
+                # about to raise below - either way, this call is no longer
+                # "waiting".
+                status_callback = _status_callback.get()
+                if status_callback is not None:
+                    status_callback(rate_limit_resume_at=None)
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
         raise AssertionError("unreachable - loop always returns or raises")

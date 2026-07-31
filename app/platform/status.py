@@ -49,6 +49,16 @@ class RunStatus(BaseModel):
     claims_provable: int = 0
     error: Optional[str] = None
 
+    # Set by GroqClient's 429 retry loop (via status_reporting - see
+    # extractor.py) to an absolute unix timestamp when a rate-limit wait is
+    # expected to clear, and reset back to None once that retry succeeds.
+    # Deliberately an absolute server-clock timestamp rather than "seconds
+    # remaining" - api.py's /analyze/{run_id}/status handler recomputes the
+    # remaining seconds fresh against its own clock on every single poll, so
+    # a slow poll or a paused laptop tab never leaves a stale countdown; the
+    # browser's clock is never consulted for this at all.
+    rate_limit_resume_at: Optional[float] = None
+
 
 class StatusStore(Protocol):
     """The only status-tracking contract the rest of the system knows about."""

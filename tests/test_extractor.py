@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import date
 
 import pytest
@@ -913,18 +914,43 @@ def test_rate_limit_backoff_surfaces_through_status_reporting_across_threads():
     calls out). Runs the full extract_candidate_claims path, not just a bare
     GroqClient.complete() call, so this actually exercises the copy_context()
     propagation into worker threads instead of just the main thread.
+
+    Also proves the wait gets reported as an absolute rate_limit_resume_at
+    (a real timestamp, not a raw seconds count baked into `detail`) AND gets
+    explicitly cleared once the retry that hit it succeeds - the progress
+    page's countdown depends on both halves of that, not just the start.
     """
     session = _RateLimitedThenOkSession(fail_count=2, body='{"claims": []}', retry_after="3")
     client = GroqClient(api_key="test-key", session=session, sleep=lambda _: None)
 
+    before = time.time()
     events: list[dict] = []
     with status_reporting(lambda **fields: events.append(fields)):
         extract_candidate_claims(
             client, document_id="doc-1", text=SOURCE, source_type=SourceType.CV
         )
+    after = time.time()
 
-    rate_limit_events = [e for e in events if "waiting" in e.get("detail", "")]
-    assert rate_limit_events == [{"detail": "waiting 3s (API rate limit)"}] * 2
+    starts = [e for e in events if e.get("rate_limit_resume_at") is not None]
+    clears = [e for e in events if "rate_limit_resume_at" in e and e["rate_limit_resume_at"] is None]
+
+    # fail_count=2 is a single counter shared (lock-protected) across all
+    # three concurrently racing calls, so exactly 2 total 429 responses is
+    # deterministic - but which call(s) they land on is a genuine race
+    # (sleep is mocked to return instantly, so one fast call can consume
+    # both fail slots itself before the others even make their first
+    # attempt). So: exactly 2 starts always; 1 or 2 clears depending on
+    # whether both 429s landed on the same call or two different ones -
+    # either way, every call that got rate-limited must eventually clear.
+    assert len(starts) == 2
+    for e in starts:
+        assert e["detail"] == "Rate-limited by the AI provider - waiting to retry"
+        # An absolute timestamp ~3s (the mocked Retry-After) out from when
+        # this call ran - not a bare "3" a template would have to reformat.
+        assert before + 3 <= e["rate_limit_resume_at"] <= after + 3
+
+    assert 1 <= len(clears) <= 2
+    assert all(e == {"rate_limit_resume_at": None} for e in clears)
 
 
 def test_groq_client_gives_up_after_max_attempts_and_raises():

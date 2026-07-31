@@ -270,6 +270,46 @@ def test_status_endpoint_reports_an_in_progress_stage_with_progress_fields():
     assert body["progress_total"] == 5
     assert body["claims_found"] == 3
     assert body["claims_provable"] == 1
+    # Not currently rate-limited - the endpoint reports that explicitly
+    # rather than omitting the key, so the progress page never has to treat
+    # "absent" and "zero seconds left" as the same thing.
+    assert body["rate_limit_seconds_remaining"] is None
+    # The raw absolute timestamp is an internal detail for computing that
+    # field fresh on every poll - never handed to the browser directly.
+    assert "rate_limit_resume_at" not in body
+
+
+def test_status_endpoint_reports_seconds_remaining_computed_fresh_from_the_server_clock():
+    """
+    RunStatus stores an absolute rate_limit_resume_at (see status.py's
+    docstring on that field for why: an absolute server-clock timestamp,
+    never something the browser's own clock has to agree with). The status
+    endpoint's job is to turn that into "how many seconds are left, right
+    now" on every single call - this proves that conversion, and that it
+    floors at zero rather than ever going negative once the deadline has
+    passed.
+    """
+    from app.platform.status import status_store
+
+    run_id = "test-rate-limited-" + uuid.uuid4().hex
+    status_store.create(run_id)
+    status_store.update(
+        run_id,
+        stage="extracting_claims",
+        detail="Rate-limited by the AI provider - waiting to retry",
+        rate_limit_resume_at=time.time() + 30,
+    )
+
+    client = TestClient(app)
+    body = client.get(f"/analyze/{run_id}/status").json()
+
+    assert body["rate_limit_seconds_remaining"] is not None
+    assert 0 < body["rate_limit_seconds_remaining"] <= 30
+
+    # Once the deadline is in the past, it reports exactly 0 - never negative.
+    status_store.update(run_id, rate_limit_resume_at=time.time() - 5)
+    body = client.get(f"/analyze/{run_id}/status").json()
+    assert body["rate_limit_seconds_remaining"] == 0.0
 
 
 def test_status_endpoint_reports_done_with_final_claim_counts(monkeypatch):

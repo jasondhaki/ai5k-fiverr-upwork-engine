@@ -120,6 +120,8 @@ def parse_github(
         on_status(stage="fetching_repos", detail=f"Fetching repos for {username}")
     repos = fetch_repos(username, session=session)
     logger.info("Found %d non-fork repos for %s", len(repos), username)
+    if on_status is not None:
+        on_status(detail=f"Found {len(repos)} non-fork repositories")
     llm_client = client or build_default_client()
 
     claims: list[Claim] = []
@@ -136,6 +138,8 @@ def parse_github(
         text = _repo_text(repo, readme)
         if not text.strip():
             logger.info("[%d/%d] repo %s has no usable text, skipping", index, len(repos), repo_name)
+            if on_status is not None:
+                on_status(detail=f"Skipped {repo_name} (no usable text)")
             continue
         logger.info("[%d/%d] Starting extraction for repo %s", index, len(repos), repo_name)
         if on_status is not None:
@@ -150,16 +154,27 @@ def parse_github(
         # spans are actually grounded against.
         original = json.dumps({"repo": repo, "readme": readme}, indent=2).encode("utf-8")
         pair = file_store.put_source(original=original, text=text, original_suffix=".json")
-        claims.extend(
-            extract_candidate_claims(
-                llm_client,
-                document_id=pair.text_id,
-                text=text,
-                source_type=SourceType.GITHUB_REPO,
-                locator_prefix=f"repo {repo_name}",
-                observed_date=_commit_recency(repo),
-            )
+        repo_claims = extract_candidate_claims(
+            llm_client,
+            document_id=pair.text_id,
+            text=text,
+            source_type=SourceType.GITHUB_REPO,
+            locator_prefix=f"repo {repo_name}",
+            observed_date=_commit_recency(repo),
         )
+        claims.extend(repo_claims)
+        # This is a local, per-repo delta for the activity log only - NOT the
+        # running claims_found/claims_provable total (route_input, which sees
+        # every source, is still the only place that reports that; see below).
+        if on_status is not None:
+            if repo_claims:
+                repo_provable = sum(1 for c in repo_claims if c.publishable)
+                on_status(
+                    detail=f"+{len(repo_claims)} claim"
+                    f"{'' if len(repo_claims) == 1 else 's'} found ({repo_provable} provable)"
+                )
+            else:
+                on_status(detail=f"No claims found in {repo_name}")
         # claims_found/claims_provable are NOT reported per-repo here: this
         # loop only ever sees GitHub's own claims, not the running total
         # across CV/Upwork too - route_input (which sees the full picture)

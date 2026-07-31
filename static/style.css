@@ -215,6 +215,12 @@ textarea { min-height: 120px; resize: vertical; }
   line-height: 1.45;
 }
 
+.rate-limit-countdown {
+  font-weight: 700;
+  margin-top: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- Dimension cards ------------------------------------------------ */
 
 .dim-list {
@@ -484,6 +490,45 @@ ul.stages li.active::before {
 @keyframes pulse-ring {
   0%, 100% { box-shadow: 0 0 0 0 rgba(15, 118, 110, .35); }
   50% { box-shadow: 0 0 0 5px rgba(15, 118, 110, 0); }
+}
+
+/* ---- Activity log (progress page) --------------------------------------- */
+
+.log-panel {
+  margin-top: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.log-panel-head {
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-weight: 700;
+  color: var(--muted);
+}
+.log-panel-body {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  padding: var(--space-3) var(--space-4);
+  max-height: 230px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-panel-body:empty::before {
+  content: "Waiting for the first update…";
+  color: #6e7681;
+}
+.log-line .ts {
+  color: #6e7681;
+  margin-right: var(--space-2);
 }
 
 .error-box {

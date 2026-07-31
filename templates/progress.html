@@ -24,9 +24,19 @@
   </div>
 
   <div class="detail" id="detail"></div>
+
+  <div class="honest-note rate-limit-note" id="rate-limit-box" style="display:none;">
+    <div>Our free-tier AI provider is rate-limiting us &mdash; this is expected and the run will continue automatically.</div>
+    <div class="rate-limit-countdown" id="rate-limit-countdown"></div>
+  </div>
 </div>
 
 <ul class="stages" id="stage-list"></ul>
+
+<div class="log-panel">
+  <div class="log-panel-head">Activity log</div>
+  <div class="log-panel-body" id="log-body"></div>
+</div>
 
 <div class="error-box" id="error-box" style="display:none;">
   <strong>Something went wrong</strong>
@@ -89,12 +99,140 @@
     requestAnimationFrame(step);
   }
 
+  // ---- Rate-limit countdown -------------------------------------------
+  //
+  // The server recomputes rate_limit_seconds_remaining fresh on every poll
+  // (see api.py's analyze_status - it's always relative to the server's own
+  // clock, never the browser's), but polls only land every 1500ms. Ticking
+  // a local copy down once a second between polls is what makes the
+  // countdown read as "live" instead of visibly jumping in 1500ms steps;
+  // each fresh poll below just overwrites countdownRemaining with the
+  // authoritative value again, correcting any local drift.
+  var countdownRemaining = null;
+  var countdownTimer = null;
+  var RESUME_TIME_THRESHOLD_SECONDS = 120;
+
+  function formatDuration(totalSeconds) {
+    var s = Math.max(0, Math.round(totalSeconds));
+    if (s < 60) return s + "s";
+    var m = Math.floor(s / 60);
+    var rem = s % 60;
+    return m + "m " + rem + "s";
+  }
+
+  function renderCountdownText() {
+    var el = document.getElementById("rate-limit-countdown");
+    if (countdownRemaining === null) return;
+    if (countdownRemaining > RESUME_TIME_THRESHOLD_SECONDS) {
+      var resumeAt = new Date(Date.now() + countdownRemaining * 1000);
+      el.textContent = "Resuming around " +
+        resumeAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } else {
+      el.textContent = "Retrying in " + formatDuration(countdownRemaining);
+    }
+  }
+
+  function renderRateLimit(secondsRemaining) {
+    var box = document.getElementById("rate-limit-box");
+    var detailEl = document.getElementById("detail");
+    if (secondsRemaining !== null && secondsRemaining !== undefined && secondsRemaining > 0) {
+      box.style.display = "block";
+      detailEl.style.display = "none";
+      countdownRemaining = secondsRemaining;
+      renderCountdownText();
+      if (!countdownTimer) {
+        countdownTimer = setInterval(function () {
+          if (countdownRemaining === null) return;
+          countdownRemaining = Math.max(0, countdownRemaining - 1);
+          renderCountdownText();
+        }, 1000);
+      }
+    } else {
+      box.style.display = "none";
+      detailEl.style.display = "";
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      countdownRemaining = null;
+    }
+  }
+
+  // ---- Activity log ------------------------------------------------------
+  //
+  // Fed entirely from the same status payload the rest of the page already
+  // polls - no separate backend mechanism. Appends one line per REAL change
+  // (stage detail text changing, claims_found/claims_provable moving, a
+  // rate-limit wait starting or clearing) rather than one line per poll, so
+  // it reads like tailing a real process instead of a timer ticking.
+  var lastLogged = {
+    detail: null, claimsFound: 0, claimsProvable: 0,
+    rateLimited: false, terminalLogged: false
+  };
+
+  function pushLog(text) {
+    var ts = new Date().toLocaleTimeString([], { hour12: false });
+    var body = document.getElementById("log-body");
+    var line = document.createElement("div");
+    line.className = "log-line";
+    var tsEl = document.createElement("span");
+    tsEl.className = "ts";
+    tsEl.textContent = ts;
+    line.appendChild(tsEl);
+    line.appendChild(document.createTextNode(text));
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function updateLog(status, secondsRemaining) {
+    var isRateLimited = !!(secondsRemaining !== null && secondsRemaining !== undefined && secondsRemaining > 0);
+
+    // The raw detail text during a rate-limit wait is the same static
+    // sentence on every poll (see extractor.py) - the dedicated rate-limit
+    // log line below, with its live duration, replaces it rather than
+    // duplicating it.
+    if (status.detail && status.detail !== lastLogged.detail && !isRateLimited) {
+      pushLog(status.detail);
+    }
+    lastLogged.detail = status.detail;
+
+    if (status.claims_found !== lastLogged.claimsFound) {
+      var deltaFound = status.claims_found - lastLogged.claimsFound;
+      var deltaProvable = status.claims_provable - lastLogged.claimsProvable;
+      if (deltaFound > 0) {
+        pushLog("+" + deltaFound + " claim" + (deltaFound === 1 ? "" : "s") +
+          " found (" + deltaProvable + " provable)");
+      }
+      lastLogged.claimsFound = status.claims_found;
+      lastLogged.claimsProvable = status.claims_provable;
+    }
+
+    if (isRateLimited && !lastLogged.rateLimited) {
+      pushLog("Rate-limited by provider — resuming in " + formatDuration(secondsRemaining));
+    }
+    if (!isRateLimited && lastLogged.rateLimited) {
+      pushLog("Resumed — continuing");
+    }
+    lastLogged.rateLimited = isRateLimited;
+
+    if (!lastLogged.terminalLogged) {
+      if (status.stage === "done") {
+        pushLog("Complete.");
+        lastLogged.terminalLogged = true;
+      } else if (status.stage === "error") {
+        pushLog("Failed: " + (status.error || "unknown error"));
+        lastLogged.terminalLogged = true;
+      }
+    }
+  }
+
   var pollHandle = null;
 
   function render(status) {
+    var secondsRemaining = status.rate_limit_seconds_remaining;
+
     animateCount("claims-found", status.claims_found);
     animateCount("claims-provable", status.claims_provable);
     document.getElementById("detail").textContent = status.detail || "";
+    renderRateLimit(secondsRemaining);
+    updateLog(status, secondsRemaining);
 
     var barWrap = document.getElementById("progress-bar-wrap");
     if (status.progress_total) {
