@@ -1,23 +1,33 @@
 """
-Proves /analyze actually persists the Result it renders, through the
-Repository interface - not just that the page renders (that's
-test_pipeline_skeleton.py's job).
+Proves the async /analyze flow works end to end through the Repository
+interface and the status store - not just that pages render (that's
+test_pipeline_skeleton.py's job for the synchronous pipeline itself).
 
 Monkeypatches app.platform.api.repository to a SQLite-backed repository
 (same pattern as monkeypatching build_default_client elsewhere) so this
 never touches the real DATABASE_URL-backed singleton or the network, even
 though a real Neon URL is present in .env.
+
+Note on timing: FastAPI's TestClient drives BackgroundTasks to completion
+before .post(...) returns control to the caller, so in practice every poll
+loop below resolves on its first iteration. The tests still poll in a loop
+(rather than assuming that), because that's the real contract
+/analyze/{run_id}/status promises regardless of this test client's
+particular execution model.
 """
 
 from __future__ import annotations
 
 import json
+import time
+import uuid
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.ingestion.github_parser import GitHubFetchError
 from app.platform.api import app
 from app.storage.models import Base
 from app.storage.repository import SqlAlchemyRepository
@@ -34,14 +44,71 @@ def _sqlite_repository() -> SqlAlchemyRepository:
     return SqlAlchemyRepository(session_factory=session_factory)
 
 
+def _run_id_from_redirect(response) -> str:
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert location.startswith("/analyze/")
+    return location.rsplit("/", 1)[-1]
+
+
+def _poll_until_terminal(client: TestClient, run_id: str, max_polls: int = 50) -> dict:
+    for _ in range(max_polls):
+        response = client.get(f"/analyze/{run_id}/status")
+        assert response.status_code == 200
+        status = response.json()
+        if status["stage"] in ("done", "error"):
+            return status
+        time.sleep(0.01)
+    raise AssertionError(f"run {run_id} never reached a terminal stage after {max_polls} polls")
+
+
+# --- POST /analyze: redirects, never renders the report inline any more -----
+
+
+def test_analyze_redirects_to_the_progress_page_instead_of_rendering_inline(monkeypatch):
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    client = TestClient(app)
+    response = client.post(
+        "/analyze", data={"niche": "SMB workflow automation"}, follow_redirects=False
+    )
+
+    run_id = _run_id_from_redirect(response)
+    assert run_id  # non-empty - a real run_id was minted and put in the URL
+
+
+def test_progress_page_renders_for_a_run_the_post_just_created(monkeypatch):
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    client = TestClient(app)
+    post_response = client.post(
+        "/analyze", data={"niche": "SMB workflow automation"}, follow_redirects=False
+    )
+    run_id = _run_id_from_redirect(post_response)
+
+    progress_response = client.get(f"/analyze/{run_id}")
+
+    assert progress_response.status_code == 200
+    assert run_id in progress_response.text  # the JS needs it to poll the right URL
+
+
+# --- Persistence: the whole point of wiring save_claims alongside save_result -
+
+
 def test_analyze_persists_the_result_via_the_repository(monkeypatch):
     test_repo = _sqlite_repository()
     monkeypatch.setattr("app.platform.api.repository", test_repo)
 
     client = TestClient(app)
-    response = client.post("/analyze", data={"niche": "SMB workflow automation"})
+    post_response = client.post(
+        "/analyze", data={"niche": "SMB workflow automation"}, follow_redirects=False
+    )
+    run_id = _run_id_from_redirect(post_response)
 
-    assert response.status_code == 200
+    status = _poll_until_terminal(client, run_id)
+    assert status["stage"] == "done"
 
     with test_repo._session_factory() as session:
         from app.storage.models import ResultRecord
@@ -54,12 +121,12 @@ def test_analyze_persists_the_result_via_the_repository(monkeypatch):
 
 def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     """
-    The whole point of wiring save_claims alongside save_result is that a
-    stored Result can be traced back to the EXACT claims that produced it,
-    not just "some claims exist somewhere". Proves that end to end through
-    a real /analyze request: the run_id on the response header, the Result,
-    and the linked Claims all agree, and /report/{run_id} returns both
-    together.
+    A stored Result can be traced back to the EXACT claims that produced it,
+    not just "some claims exist somewhere". Proves that end to end through a
+    real (background-task-driven) /analyze request: the run_id in the
+    redirect, the polled status, the Result, and the linked Claims all
+    agree, and both /report/{run_id} (JSON) and /analyze/{run_id}/result
+    (HTML) return the same finished report.
     """
     test_repo = _sqlite_repository()
     monkeypatch.setattr("app.platform.api.repository", test_repo)
@@ -93,15 +160,20 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     monkeypatch.setattr("app.generation.build_default_client", lambda: _FakeGenClient())
 
     client = TestClient(app)
-    response = client.post(
+    post_response = client.post(
         "/analyze",
         data={
             "niche": "SMB workflow automation",
             "upwork_text": "cut costs by 40 percent for a client this year",
         },
+        follow_redirects=False,
     )
-    assert response.status_code == 200
-    run_id = response.headers["X-Run-Id"]
+    run_id = _run_id_from_redirect(post_response)
+
+    status = _poll_until_terminal(client, run_id)
+    assert status["stage"] == "done"
+    assert status["claims_found"] == 1
+    assert status["claims_provable"] == 1
 
     report = test_repo.get_report(run_id)
     assert report is not None
@@ -118,6 +190,15 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     assert len(body["claims"]) == 1
     assert body["claims"][0]["claim_text"] == "cut costs by 40 percent"
 
+    # And the same HTML report page /analyze used to render inline before -
+    # now only reachable once the background run has actually finished.
+    result_page = client.get(f"/analyze/{run_id}/result")
+    assert result_page.status_code == 200
+    assert "Profile Readiness" in result_page.text
+
+
+# --- /report/{run_id}: unchanged JSON contract -------------------------------
+
 
 def test_report_endpoint_404s_for_an_unknown_run_id(monkeypatch):
     test_repo = _sqlite_repository()
@@ -127,3 +208,110 @@ def test_report_endpoint_404s_for_an_unknown_run_id(monkeypatch):
     response = client.get("/report/does-not-exist")
 
     assert response.status_code == 404
+
+
+# --- Unknown run_id: every /analyze/{run_id}* route 404s, never 200s with junk --
+
+
+def test_status_endpoint_404s_for_an_unknown_run_id():
+    client = TestClient(app)
+    assert client.get("/analyze/does-not-exist/status").status_code == 404
+
+
+def test_progress_page_404s_for_an_unknown_run_id():
+    client = TestClient(app)
+    assert client.get("/analyze/does-not-exist").status_code == 404
+
+
+def test_result_page_404s_for_an_unknown_run_id(monkeypatch):
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    client = TestClient(app)
+    assert client.get("/analyze/does-not-exist/result").status_code == 404
+
+
+# --- Status endpoint: in-progress and error snapshots ------------------------
+
+
+def test_status_endpoint_reports_an_in_progress_stage_with_progress_fields():
+    """
+    Directly exercises the status store + endpoint together: a real pipeline
+    run completes synchronously under TestClient's background-task execution
+    model (see module docstring), so this is the only way to observe an
+    in-progress snapshot through the HTTP layer rather than the already-
+    finished one - proves the endpoint faithfully reports whatever the store
+    currently holds, including the per-repo progress fields.
+    """
+    from app.platform.status import status_store
+
+    run_id = "test-in-progress-" + uuid.uuid4().hex
+    status_store.create(run_id)
+    status_store.update(
+        run_id,
+        stage="fetching_repos",
+        detail="repo 2/5: digital-workshop",
+        progress_current=2,
+        progress_total=5,
+        claims_found=3,
+        claims_provable=1,
+    )
+
+    client = TestClient(app)
+    response = client.get(f"/analyze/{run_id}/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "fetching_repos"
+    assert body["detail"] == "repo 2/5: digital-workshop"
+    assert body["progress_current"] == 2
+    assert body["progress_total"] == 5
+    assert body["claims_found"] == 3
+    assert body["claims_provable"] == 1
+
+
+def test_status_endpoint_reports_done_with_final_claim_counts(monkeypatch):
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    client = TestClient(app)
+    post_response = client.post(
+        "/analyze", data={"niche": "SMB workflow automation"}, follow_redirects=False
+    )
+    run_id = _run_id_from_redirect(post_response)
+
+    status = _poll_until_terminal(client, run_id)
+
+    assert status["stage"] == "done"
+    assert status["error"] is None
+
+
+def test_status_endpoint_reports_error_with_a_message_on_a_real_failure(monkeypatch):
+    """
+    A real failure, not a synthetic status-store poke: monkeypatches the
+    GitHub fetch to raise, proving the background task's own exception
+    handling (app.platform.api._run_pipeline_in_background) actually
+    surfaces the failure through the status store instead of the exception
+    vanishing into BackgroundTasks with nothing to show the person watching
+    the progress page.
+    """
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    def _raise(*args, **kwargs):
+        raise GitHubFetchError("GitHub user 'this-should-not-exist' does not exist.")
+
+    monkeypatch.setattr("app.ingestion.github_parser.fetch_repos", _raise)
+
+    client = TestClient(app)
+    post_response = client.post(
+        "/analyze",
+        data={"niche": "SMB workflow automation", "github_username": "this-should-not-exist"},
+        follow_redirects=False,
+    )
+    run_id = _run_id_from_redirect(post_response)
+
+    status = _poll_until_terminal(client, run_id)
+
+    assert status["stage"] == "error"
+    assert "does not exist" in status["error"]

@@ -74,7 +74,21 @@ broken the product.
   `requirements-production.txt`). `PDF_PARSER=pypdfium2|docling` picks
   between them — see "Swappable backends" below.
 - `app/platform/pipeline.py` — the orchestrator. Six stubbed stages.
-- `app/platform/api.py` + `templates/` — the walking skeleton UI.
+- `app/platform/status.py` — in-process run-status tracking behind a
+  `StatusStore` protocol (same spirit as `FileStore`/`Repository`). POST
+  `/analyze` runs the pipeline as a FastAPI `BackgroundTask` and redirects
+  immediately to a polling progress page - a real run makes several live LLM
+  calls and holding the HTTP request open for that both looks broken and
+  risks a platform timeout. `run_pipeline`'s optional `on_status` callback
+  reports each stage; `status_reporting()` in `app/ingestion/extractor.py`
+  makes that callback readable from `GroqClient`'s rate-limit retry loop too
+  (across thread-pool workers - same contextvar trick as `_source_label`),
+  so a demo hitting Groq's free-tier limit explains the wait instead of
+  going silent. KNOWN LIMITATION: in-process only - a restart mid-run loses
+  the job and its status together (coherent, not a bug to fix here).
+- `app/platform/api.py` + `templates/` — the walking skeleton UI, now async
+  (`templates/progress.html` is the polling page; `result.html` is
+  unchanged, reached via `/analyze/{run_id}/result` once a run finishes).
 - `tests/` — 19 passing tests. Keep them green; add to them.
 
 Run the skeleton:  `uvicorn app.platform.api:app --reload`

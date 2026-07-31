@@ -40,6 +40,7 @@ two or three times over.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import contextvars
 import difflib
 import json
@@ -63,6 +64,37 @@ logger = logging.getLogger(__name__)
 _source_label: contextvars.ContextVar[str] = contextvars.ContextVar(
     "source_label", default="unknown source"
 )
+
+# Same propagation mechanism as _source_label above, for a different purpose:
+# lets GroqClient's rate-limit backoff (the retry loop in .complete() below)
+# surface a human-readable "waiting Ns (API rate limit)" detail through the
+# async /analyze progress page, without extract_candidate_claims or
+# generate_title_draft/generate_overview_draft needing an on_status parameter
+# of their own - status_reporting() is entered ONCE, by run_pipeline, around
+# the whole run (both ingestion's parallel LLM calls AND generation's direct
+# ones), and every ThreadPoolExecutor submission below already copies
+# whatever this is set to via contextvars.copy_context().run(...).
+_status_callback: contextvars.ContextVar[Callable[..., None] | None] = contextvars.ContextVar(
+    "status_callback", default=None
+)
+
+
+@contextlib.contextmanager
+def status_reporting(on_status: Callable[..., None] | None):
+    """Makes `on_status` readable from GroqClient's retry loop (and anywhere
+    else in this module) for the duration of the `with` block. A no-op
+    context (nothing set, nothing to reset) when `on_status` is None, which
+    is the case for every one of the ~230 existing tests that call
+    run_pipeline directly without one."""
+    if on_status is None:
+        yield
+        return
+    token = _status_callback.set(on_status)
+    try:
+        yield
+    finally:
+        _status_callback.reset(token)
+
 
 import requests
 from pydantic import BaseModel, ValidationError
@@ -199,6 +231,9 @@ class GroqClient:
                         _source_label.get(), delay, attempt + 2, GROQ_MAX_ATTEMPTS,
                         headers or "(none returned)",
                     )
+                    status_callback = _status_callback.get()
+                    if status_callback is not None:
+                        status_callback(detail=f"waiting {delay:.0f}s (API rate limit)")
                     self._sleep(delay)
                     continue
                 logger.error(

@@ -8,6 +8,8 @@ document, so every claim grounds directly against exactly what they pasted.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
 from app.schemas import Claim, SourceType
 from app.storage.store import file_store
@@ -21,12 +23,19 @@ class UpworkParsingError(ValueError):
     """Raised when pasted Upwork text is too short/empty to extract from."""
 
 
-def parse_upwork_text(text: str, client: LLMClient | None = None) -> list[Claim]:
+def parse_upwork_text(
+    text: str,
+    client: LLMClient | None = None,
+    on_status: Callable[..., None] | None = None,
+) -> list[Claim]:
     stripped = text.strip()
     if len(stripped) < MIN_TEXT_CHARS:
         raise UpworkParsingError(
             f"Pasted Upwork text is too short ({len(stripped)} chars) to extract claims from."
         )
+
+    if on_status is not None:
+        on_status(stage="extracting_claims", detail="Extracting claims from pasted Upwork text")
 
     # The paste IS the source, so "original" and "extracted text" are the same
     # string - but they're still stored as two linked documents, per the

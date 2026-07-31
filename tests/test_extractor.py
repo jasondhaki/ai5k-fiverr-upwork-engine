@@ -28,6 +28,7 @@ from app.ingestion.extractor import (
     _try_ground,
     build_default_client,
     extract_candidate_claims,
+    status_reporting,
     validate_llm_config,
 )
 from app.schemas import Claim, SourceType
@@ -900,6 +901,30 @@ def test_groq_client_honors_the_retry_after_header():
     client.complete(system="sys", prompt="text")
 
     assert sleeps == [7.0]
+
+
+def test_rate_limit_backoff_surfaces_through_status_reporting_across_threads():
+    """
+    The real thing this mechanism exists for: extract_candidate_claims runs
+    three passes concurrently in a ThreadPoolExecutor, and status_reporting's
+    contextvar has to survive that - just being set on the calling thread
+    isn't enough proof, since ThreadPoolExecutor does NOT copy contextvars
+    into worker threads on its own (same caveat _source_label's own comment
+    calls out). Runs the full extract_candidate_claims path, not just a bare
+    GroqClient.complete() call, so this actually exercises the copy_context()
+    propagation into worker threads instead of just the main thread.
+    """
+    session = _RateLimitedThenOkSession(fail_count=2, body='{"claims": []}', retry_after="3")
+    client = GroqClient(api_key="test-key", session=session, sleep=lambda _: None)
+
+    events: list[dict] = []
+    with status_reporting(lambda **fields: events.append(fields)):
+        extract_candidate_claims(
+            client, document_id="doc-1", text=SOURCE, source_type=SourceType.CV
+        )
+
+    rate_limit_events = [e for e in events if "waiting" in e.get("detail", "")]
+    assert rate_limit_events == [{"detail": "waiting 3s (API rate limit)"}] * 2
 
 
 def test_groq_client_gives_up_after_max_attempts_and_raises():

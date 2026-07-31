@@ -15,6 +15,7 @@ selected: this module owns that check, neither backend does.
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
 from app.ingestion.pdf_extractor import CVParsingError, pdf_text_extractor
@@ -53,9 +54,15 @@ def extract_pdf_text(cv_bytes: bytes) -> str:
     return text
 
 
-def parse_cv(cv_bytes: bytes, client: LLMClient | None = None) -> list[Claim]:
+def parse_cv(
+    cv_bytes: bytes,
+    client: LLMClient | None = None,
+    on_status: Callable[..., None] | None = None,
+) -> list[Claim]:
     """Parse a CV upload into grounded claims. Native PDFs only."""
     logger.info("Starting CV extraction (%d bytes)", len(cv_bytes))
+    if on_status is not None:
+        on_status(stage="parsing_cv", detail="Reading PDF")
     if not _looks_like_pdf(cv_bytes):
         raise CVParsingError(
             "Unsupported file type - only native PDF resumes are supported this sprint."
@@ -68,6 +75,8 @@ def parse_cv(cv_bytes: bytes, client: LLMClient | None = None) -> list[Claim]:
     # untouched source rather than just its current extraction.
     pair = file_store.put_source(original=cv_bytes, text=text, original_suffix=".pdf")
 
+    if on_status is not None:
+        on_status(stage="extracting_claims", detail="Extracting claims from CV")
     llm_client = client or build_default_client()
     return extract_candidate_claims(
         llm_client,

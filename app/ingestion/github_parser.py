@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from datetime import date, datetime
+from typing import Callable
 
 import requests
 
@@ -111,9 +112,12 @@ def parse_github(
     username: str,
     session: requests.Session | None = None,
     client: LLMClient | None = None,
+    on_status: Callable[..., None] | None = None,
 ) -> list[Claim]:
     """Pull repos for `username` and extract grounded claims from each repo's
     name + description + README text."""
+    if on_status is not None:
+        on_status(stage="fetching_repos", detail=f"Fetching repos for {username}")
     repos = fetch_repos(username, session=session)
     logger.info("Found %d non-fork repos for %s", len(repos), username)
     llm_client = client or build_default_client()
@@ -121,12 +125,26 @@ def parse_github(
     claims: list[Claim] = []
     for index, repo in enumerate(repos, start=1):
         repo_name = repo.get("name") or username
+        if on_status is not None:
+            on_status(
+                stage="fetching_repos",
+                detail=f"repo {index}/{len(repos)}: {repo_name}",
+                progress_current=index,
+                progress_total=len(repos),
+            )
         readme = _fetch_readme(repo, session=session)
         text = _repo_text(repo, readme)
         if not text.strip():
             logger.info("[%d/%d] repo %s has no usable text, skipping", index, len(repos), repo_name)
             continue
         logger.info("[%d/%d] Starting extraction for repo %s", index, len(repos), repo_name)
+        if on_status is not None:
+            on_status(
+                stage="extracting_claims",
+                detail=f"repo {index}/{len(repos)}: {repo_name}",
+                progress_current=index,
+                progress_total=len(repos),
+            )
         # The original is the raw API data (the repo list entry plus its
         # README) - retained as-is, distinct from `text`, the derived string
         # spans are actually grounded against.
@@ -142,4 +160,8 @@ def parse_github(
                 observed_date=_commit_recency(repo),
             )
         )
+        # claims_found/claims_provable are NOT reported per-repo here: this
+        # loop only ever sees GitHub's own claims, not the running total
+        # across CV/Upwork too - route_input (which sees the full picture)
+        # is the only place that reports those, once this whole call returns.
     return claims
