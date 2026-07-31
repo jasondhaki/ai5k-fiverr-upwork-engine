@@ -185,6 +185,41 @@ def test_portfolio_quality_partial_when_below_targets():
     assert score_portfolio_quality([one_item_unquantified], benchmark) == pytest.approx(25.0)
 
 
+def test_portfolio_quality_counts_two_claims_sharing_an_identical_span_once():
+    """
+    Two different extraction passes can independently ground two DIFFERENT
+    claims - real claims, not a grounding bug - to the exact same source
+    sentence (e.g. a "skill used" claim and a "project demonstrated" claim
+    both citing the same README line, as seen in a real run). That's one
+    piece of portfolio evidence, not two: item_ids is keyed by
+    source_span.document_id, so two claims sharing an identical span (same
+    document_id, same start/end indices, since both are built from the same
+    span_text/document_id here) collapse to the same set element regardless
+    of how many distinct claims cite it.
+    """
+    shared_span_text = "Built the HeroScene with Three.js and dynamic imports for heavy assets"
+    skill_claim = _claim(
+        "Used Three.js", SourceType.GITHUB_REPO, span_text=shared_span_text, document_id="doc-1"
+    )
+    portfolio_claim = _claim(
+        "Implemented dynamic imports for heavy assets, specifically the HeroScene",
+        SourceType.GITHUB_REPO,
+        span_text=shared_span_text,
+        document_id="doc-1",
+    )
+    # portfolio_min_quantified=0 isolates item counting from the quantified
+    # half of the score, which this case doesn't otherwise exercise.
+    benchmark = _benchmark(portfolio_min_items=2, portfolio_min_quantified=0)
+
+    # If this counted per-claim instead of per-span/document, two claims
+    # would satisfy portfolio_min_items=2 outright (score 100.0). It must
+    # instead score as exactly ONE item against a target of two: item_score
+    # = 1/2 = 0.5, quantified_score fixed at 1.0 -> average 0.75 -> 75.0.
+    assert score_portfolio_quality(
+        [skill_claim, portfolio_claim], benchmark
+    ) == pytest.approx(75.0)
+
+
 # --- completeness ------------------------------------------------------------------
 
 

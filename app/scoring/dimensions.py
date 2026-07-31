@@ -245,6 +245,17 @@ def score_portfolio_quality(claims: list[Claim], benchmark: Benchmark) -> float:
     ingestion already had to successfully reach and parse that source to
     produce a grounded claim from it at all, which is the closest available
     stand-in for "the link worked" without doing a network call here.
+
+    Item/quantified counts are keyed by source_span.document_id, not by claim
+    - deliberately, not incidentally. Different extraction passes routinely
+    ground two genuinely different claims (e.g. a skill-used claim and a
+    project-demonstrated claim) to the exact same source sentence; counting
+    per-claim would double-count that single piece of evidence as two
+    portfolio items. Keying by document_id means every claim grounded
+    anywhere in the same source document - whether they share the identical
+    span or not - collapses to one item, matching "one repo/one document is
+    one portfolio item" regardless of how many claims cite it. See
+    test_portfolio_quality_counts_two_claims_sharing_an_identical_span_once.
     """
     portfolio_claims = [
         c for c in claims if c.source_type in _PORTFOLIO_SOURCES and c.publishable
