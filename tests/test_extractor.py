@@ -25,6 +25,7 @@ from app.ingestion.extractor import (
     _is_boilerplate,
     _provisional_tier,
     _significant_words,
+    _try_ground,
     build_default_client,
     extract_candidate_claims,
     validate_llm_config,
@@ -200,6 +201,72 @@ def test_retry_recovers_after_one_malformed_response():
     assert claims == []  # the recovered response is an empty claims list
     # exactly one pass needed its retry; the other two succeeded first try
     assert client.calls == 4
+
+
+# --- Quote/dash normalization: typographic noise isn't a paraphrase ---------
+#
+# ~40% of ungrounded claims in a real run (12 of 30) were this exact failure
+# mode: the model reproduces a quoted phrase's words correctly but with a
+# different quote glyph than the source uses, and str.find missed an
+# otherwise perfect match. Real, provable evidence, discarded for nothing
+# more than punctuation noise.
+
+
+def test_a_quote_wrapped_in_different_quote_glyphs_than_the_source_still_grounds():
+    """The exact reported case: the source wraps the phrase in curly DOUBLE
+    quotes, the model's evidence_quote wraps it in straight SINGLE quotes -
+    not just a different style of the same quote family, a different family
+    entirely. Must still ground, and the grounded span.text must be the
+    ORIGINAL source's exact characters (curly quotes and all) - never the
+    normalized copy used only to locate it."""
+    source = (
+        "The site headline: “BRIDGING THE GAP BETWEEN PIXELS AND "
+        "PNEUMATICS” ran across the top of the page."
+    )
+    item = _ExtractedSpan(
+        claim_text="Wrote the site's PIXELS AND PNEUMATICS headline",
+        evidence_quote="'BRIDGING THE GAP BETWEEN PIXELS AND PNEUMATICS'",
+    )
+
+    span = _try_ground(item, document_id="doc-1", text=source, locator=None)
+
+    assert span is not None
+    assert span.text == (
+        "“BRIDGING THE GAP BETWEEN PIXELS AND PNEUMATICS”"
+    )
+    # The span's indices must resolve to that exact substring in the
+    # ORIGINAL, un-normalized source - not a coincidence of the normalized copy.
+    assert source[span.start_index : span.end_index] == span.text
+
+
+def test_an_en_dash_in_the_quote_still_grounds_against_a_hyphen_in_the_source():
+    source = "Rebuilt the pipeline end-to-end, cutting latency significantly."
+    item = _ExtractedSpan(
+        claim_text="Rebuilt the pipeline",
+        evidence_quote="Rebuilt the pipeline end–to–end",  # en dashes
+    )
+
+    span = _try_ground(item, document_id="doc-1", text=source, locator=None)
+
+    assert span is not None
+    assert span.text == "Rebuilt the pipeline end-to-end"  # source's real hyphens
+
+
+def test_a_genuinely_different_phrase_still_fails_to_ground():
+    """Normalization must not become a backdoor for approximate matching -
+    only the fixed, known set of quote/dash glyphs is folded together, so a
+    real paraphrase (different words, not just different punctuation) still
+    fails exactly as before."""
+    source = (
+        "The site headline: “BRIDGING THE GAP BETWEEN PIXELS AND "
+        "PNEUMATICS” ran across the top of the page."
+    )
+    item = _ExtractedSpan(
+        claim_text="Wrote a completely different headline",
+        evidence_quote="CROSSING THE CHASM FROM SENSORS TO SOFTWARE",
+    )
+
+    assert _try_ground(item, document_id="doc-1", text=source, locator=None) is None
 
 
 # --- Deduplication: one accomplishment shouldn't inflate a profile ----------

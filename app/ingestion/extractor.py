@@ -602,6 +602,49 @@ def _dedupe_claims(claims: list[Claim]) -> list[Claim]:
 # source even though it's technically a verbatim substring somewhere.
 MIN_QUOTE_CHARS = 8
 
+# A model reliably reproduces a quoted phrase's WORDS correctly but not
+# always its exact punctuation glyph - e.g. it wraps the phrase in straight
+# single quotes where the source uses curly DOUBLE quotes (a real observed
+# case - the model isn't just picking a different style of the SAME quote
+# family, it mixes families too), or uses a plain hyphen where the source
+# has an en/em dash. That's real, provable evidence lost to nothing more
+# than character-set noise, not paraphrasing (measured on a real run: ~40%
+# of ungrounded claims - 12 of 30 - were this exact failure mode). Every
+# quote variant - single or double, curly or straight - folds to the SAME
+# canonical character (a plain apostrophe), not two separate canonical forms
+# segregated by family, specifically so a single-vs-double mismatch like the
+# one above still matches. Dashes get their own, separate canonical form.
+#
+# Every key/value pair here is a single Unicode code point mapped to a
+# single plain-ASCII code point - never a multi-character substitution - so
+# normalizing never changes string length or shifts character positions.
+# That's what makes it safe to use for locating an index into the ORIGINAL,
+# un-normalized source text below (see _try_ground): this is character-class
+# canonicalization over a small fixed set of known typographically-
+# equivalent glyphs, not fuzzy/approximate matching - every other character
+# still must match exactly.
+_QUOTE_AND_DASH_NORMALIZATION = str.maketrans({
+    "‘": "'",  # LEFT SINGLE QUOTATION MARK
+    "’": "'",  # RIGHT SINGLE QUOTATION MARK
+    "‚": "'",  # SINGLE LOW-9 QUOTATION MARK
+    "‛": "'",  # SINGLE HIGH-REVERSED-9 QUOTATION MARK
+    '"': "'",  # QUOTATION MARK (straight double)
+    "“": "'",  # LEFT DOUBLE QUOTATION MARK
+    "”": "'",  # RIGHT DOUBLE QUOTATION MARK
+    "„": "'",  # DOUBLE LOW-9 QUOTATION MARK
+    "‟": "'",  # DOUBLE HIGH-REVERSED-9 QUOTATION MARK
+    "–": "-",  # EN DASH
+    "—": "-",  # EM DASH
+})
+
+
+def _normalize_quotes_and_dashes(value: str) -> str:
+    """Fold typographically-equivalent quote/dash glyphs to one plain-ASCII
+    form each. Used only to LOCATE a match (see _try_ground) - the span's
+    actual text always comes from re-slicing the original, un-normalized
+    source, never this normalized copy."""
+    return value.translate(_QUOTE_AND_DASH_NORMALIZATION)
+
 _STOPWORDS = frozenset({
     "with", "that", "this", "from", "were", "have", "been", "into", "over",
     "using", "used", "your", "their", "which", "about", "these", "those",
@@ -642,14 +685,25 @@ def _try_ground(
     that: if the claim and its supposed evidence share not even one
     significant word, the "evidence" almost certainly isn't evidence for
     THIS claim, so it's dropped rather than published as if it were proof.
+
+    The search itself runs against quote-and-dash-normalized copies of both
+    strings (see _QUOTE_AND_DASH_NORMALIZATION) so a model that reproduces a
+    quote's words correctly but with a different quote glyph (curly vs
+    straight) or dash (en/em vs hyphen) still grounds - that's typographic
+    noise, not a paraphrase. Still exact substring matching, just over a
+    canonicalized character set; every other character must match exactly,
+    and the normalization is strictly one-code-point-to-one-code-point, so
+    the index found in the normalized text is valid in the ORIGINAL `text`
+    too - which is what actually gets sliced, below and in ground_span.
     """
     quote = item.evidence_quote
     if not quote or len(quote) < MIN_QUOTE_CHARS:
         return None
-    start_index = text.find(quote)
+    normalized_quote = _normalize_quotes_and_dashes(quote)
+    start_index = _normalize_quotes_and_dashes(text).find(normalized_quote)
     if start_index == -1:
         return None
-    end_index = start_index + len(quote)
+    end_index = start_index + len(normalized_quote)
     try:
         span = ground_span(
             document_id=document_id,
