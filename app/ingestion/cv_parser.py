@@ -45,12 +45,19 @@ def _build_converter():
     text layer is read, so a scan reliably comes back near-empty and fails
     loudly instead of silently "working". This also skips downloading and
     loading the OCR model weights, which is most of Docling's cold-start cost.
+
+    Table-structure recognition is also disabled: CLAUDE.md scopes this
+    parser to "a handful of common single-column resume layouts" - not
+    tables - so the table-former model is pure memory/CPU overhead here,
+    never exercised by an in-scope document. Cuts real memory (worth doing
+    on a constrained hosted instance) at zero behavior cost for the layouts
+    this parser actually supports.
     """
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
-    pipeline_options = PdfPipelineOptions(do_ocr=False)
+    pipeline_options = PdfPipelineOptions(do_ocr=False, do_table_structure=False)
     return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
     )
