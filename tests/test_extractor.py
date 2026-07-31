@@ -847,6 +847,27 @@ def test_groq_client_gives_up_after_max_attempts_and_raises():
     assert len(sleeps) == extractor.GROQ_MAX_ATTEMPTS - 1
 
 
+def test_groq_client_logs_rate_limit_headers_when_finally_giving_up(caplog):
+    """A bare '429 Client Error' tells you nothing about WHEN to retry - Groq
+    sends Retry-After / x-ratelimit-reset-* headers saying exactly that, so
+    the final failure must surface them (in the log, since the raised
+    exception type stays requests.HTTPError - see the test above)."""
+
+    class _RateLimitedWithHeaders:
+        def post(self, url, headers=None, json=None, timeout=None):
+            return _FakeGroqResponse(
+                "", status_code=429, headers={"x-ratelimit-reset-requests": "2m59.56s"}
+            )
+
+    client = GroqClient(api_key="test-key", session=_RateLimitedWithHeaders(), sleep=lambda _: None)
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(requests.HTTPError):
+            client.complete(system="sys", prompt="text")
+
+    assert any("2m59.56s" in record.message for record in caplog.records)
+
+
 # --- Provider selection: build_default_client() ------------------------------
 
 

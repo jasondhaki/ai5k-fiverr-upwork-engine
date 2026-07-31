@@ -132,6 +132,23 @@ def _groq_retry_delay(response, attempt: int) -> float:
     return min(GROQ_BACKOFF_BASE_SECONDS * (2**attempt), GROQ_BACKOFF_MAX_SECONDS)
 
 
+def _rate_limit_headers(response) -> dict[str, str]:
+    """Every header Groq sent about the rate limit itself - not just
+    Retry-After but the OpenAI-compatible x-ratelimit-* headers (remaining
+    quota, reset time per limit type). Matched by prefix rather than an exact
+    hardcoded name list, since which of these Groq actually sends has changed
+    before and a prefix match stays correct either way. Logged (not just used
+    for the retry math above) so a run that ultimately fails tells you WHEN
+    it'll work again instead of just that it didn't."""
+    if not response.headers:
+        return {}
+    return {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() == "retry-after" or key.lower().startswith("x-ratelimit-")
+    }
+
+
 class GroqClient:
     """Thin wrapper over Groq's OpenAI-compatible chat-completions endpoint.
     Same `complete(system, prompt) -> str` contract as AnthropicClient, so
@@ -172,14 +189,24 @@ class GroqClient:
                 timeout=GROQ_REQUEST_TIMEOUT,
             )
             is_last_attempt = attempt == GROQ_MAX_ATTEMPTS - 1
-            if response.status_code == 429 and not is_last_attempt:
-                delay = _groq_retry_delay(response, attempt)
-                logger.warning(
-                    "[%s] Groq rate-limited, retrying in %.1fs (attempt %d/%d)",
-                    _source_label.get(), delay, attempt + 2, GROQ_MAX_ATTEMPTS,
+            if response.status_code == 429:
+                headers = _rate_limit_headers(response)
+                if not is_last_attempt:
+                    delay = _groq_retry_delay(response, attempt)
+                    logger.warning(
+                        "[%s] Groq rate-limited, retrying in %.1fs (attempt %d/%d) - "
+                        "rate-limit headers: %s",
+                        _source_label.get(), delay, attempt + 2, GROQ_MAX_ATTEMPTS,
+                        headers or "(none returned)",
+                    )
+                    self._sleep(delay)
+                    continue
+                logger.error(
+                    "[%s] Groq rate limit exceeded after %d attempts - rate-limit "
+                    "headers from the last response (retry-after / x-ratelimit-reset-* "
+                    "say when it resets): %s",
+                    _source_label.get(), GROQ_MAX_ATTEMPTS, headers or "(none returned)",
                 )
-                self._sleep(delay)
-                continue
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]
         raise AssertionError("unreachable - loop always returns or raises")
