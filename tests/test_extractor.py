@@ -27,6 +27,7 @@ from app.ingestion.extractor import (
     _significant_words,
     build_default_client,
     extract_candidate_claims,
+    validate_llm_config,
 )
 from app.schemas import Claim, SourceType
 from app.schemas.claim import EvidenceTier
@@ -906,6 +907,84 @@ def test_build_default_client_defaults_to_whichever_key_is_present(monkeypatch):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "present")
     assert isinstance(build_default_client(), _SentinelAnthropicClient)
+
+
+# --- Startup validation: validate_llm_config() --------------------------------
+#
+# build_default_client() itself doesn't fail until the client actually makes
+# its first real call (the Anthropic SDK doesn't validate a missing key at
+# construction, only on first use) - so a misconfigured deploy would start
+# fine and only fail on a real user's first analyze request. These tests
+# cover both directions per env var/provider combination: the missing-key
+# case actually raises, and the present-key case does NOT raise (so this
+# can't be satisfied by a validator that just always raises).
+
+
+def test_validate_llm_config_raises_naming_the_exact_missing_var_for_anthropic(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        validate_llm_config()
+
+
+def test_validate_llm_config_passes_when_anthropic_key_is_present(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake-not-real")
+
+    validate_llm_config()  # must not raise
+
+
+def test_validate_llm_config_raises_naming_the_exact_missing_var_for_groq(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
+        validate_llm_config()
+
+
+def test_validate_llm_config_passes_when_groq_key_is_present(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-fake-not-real")
+
+    validate_llm_config()  # must not raise
+
+
+def test_validate_llm_config_treats_a_blank_key_the_same_as_a_missing_one(monkeypatch):
+    """Render's dashboard lets you create an env var with an empty value -
+    that must fail exactly like the var being absent entirely, not pass a
+    falsy-but-present check."""
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "   ")
+
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
+        validate_llm_config()
+
+
+def test_validate_llm_config_rejects_an_unknown_provider(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+
+    with pytest.raises(RuntimeError, match="openai"):
+        validate_llm_config()
+
+
+def test_validate_llm_config_raises_when_no_provider_and_no_keys_at_all(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="No LLM credentials"):
+        validate_llm_config()
+
+
+def test_validate_llm_config_passes_with_no_provider_but_one_key_present(monkeypatch):
+    """Matches build_default_client's own fallback exactly: no LLM_PROVIDER
+    set falls back to whichever key exists."""
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-fake-not-real")
+
+    validate_llm_config()  # must not raise
 
 
 # --- Regression: grounded spans must actually relate to their claim --------

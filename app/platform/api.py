@@ -24,10 +24,19 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config.weights import validate_config
+from app.ingestion.extractor import validate_llm_config
 from app.platform.pipeline import PipelineInput, run_pipeline
 from app.storage.repository import repository
 
 validate_config()  # fail loudly at startup if weights are inconsistent
+# Fail loudly at startup if LLM_PROVIDER/its matching API key is missing too -
+# otherwise the container starts and /health passes even with no usable LLM
+# client, and the first real analyze request fails with a generic SDK error
+# instead of a clear one. See validate_llm_config's docstring. Note this does
+# mean importing this module (as tests/test_api.py's TestClient does) needs
+# SOME LLM credential present in the environment - any non-empty value works,
+# no real/live key required, since this never makes a network call.
+validate_llm_config()
 
 app = FastAPI(title="AI5K Profile Intelligence - Working Slice")
 

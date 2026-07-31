@@ -238,6 +238,57 @@ def build_default_client() -> LLMClient:
     return AnthropicClient()
 
 
+def validate_llm_config() -> None:
+    """
+    Fail loudly at startup, not on the first real request. Neither
+    AnthropicClient nor the Anthropic SDK it wraps validates a missing/empty
+    key at construction time (confirmed empirically: constructing one with
+    no key at all succeeds - the SDK only rejects it on the first actual
+    API call), so without this, a deploy with a blank ANTHROPIC_API_KEY looks
+    fully healthy - the container starts, /health passes - right up until
+    someone submits a real CV/GitHub/Upwork analysis and it fails with a
+    generic SDK error instead of a clear one. Mirrors how
+    app/storage/store.py's STORAGE_BACKEND=b2 already fails at import time if
+    its required env vars are missing.
+
+    Deliberately checks only PRESENCE, never makes a live call to confirm the
+    key actually works - that's what a `live_api`-marked test is for, not a
+    startup check that must stay fast and free. Mirrors build_default_client's
+    exact provider-selection logic above (never adds a stricter rule of its
+    own) so the two can't silently drift apart - same env vars, same
+    precedence, just the fail case runs at startup instead of at first use.
+    """
+    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if provider == "anthropic":
+        _require_llm_env("ANTHROPIC_API_KEY", "LLM_PROVIDER=anthropic")
+        return
+    if provider == "groq":
+        _require_llm_env("GROQ_API_KEY", "LLM_PROVIDER=groq")
+        return
+    if provider:
+        raise RuntimeError(
+            f"Unknown LLM_PROVIDER '{provider}' - expected 'anthropic' or 'groq'."
+        )
+
+    # No LLM_PROVIDER set: build_default_client() falls back to whichever key
+    # is present (Anthropic first) - so at least one of the two must be set,
+    # matching that fallback exactly rather than a stricter rule of our own.
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return
+    if os.environ.get("GROQ_API_KEY", "").strip():
+        return
+    raise RuntimeError(
+        "No LLM credentials configured - set LLM_PROVIDER=anthropic or "
+        "LLM_PROVIDER=groq plus the matching API key (ANTHROPIC_API_KEY or "
+        "GROQ_API_KEY), or set one of those two keys directly."
+    )
+
+
+def _require_llm_env(name: str, because: str) -> None:
+    if not os.environ.get(name, "").strip():
+        raise RuntimeError(f"{name} is not set (or is empty) - required because {because}.")
+
+
 class _ExtractedSpan(BaseModel):
     """One candidate claim as the model reports it. Every field nullable -
     the model may find nothing for a given pass.
