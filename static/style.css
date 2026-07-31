@@ -4,31 +4,62 @@
    spacing change happens here once, not per-template. */
 
 :root {
-  --ink: #1f2a44;
-  --muted: #6b7280;
-  --line: #e5e7eb;
-  --bg: #f7f7f8;
-  --surface: #ffffff;
+  color-scheme: dark;
 
-  --accent: #0f766e;
-  --accent-dark: #0b5c56;
-  --accent-rgb: 15, 118, 110;
-  --block: #b91c1c;
-  --block-bg: #fef2f2;
-  --amber: #92400e;
-  --amber-bg: #fffbeb;
-  --green: #15803d;
-  --green-bg: #f0fdf4;
-  --green-rgb: 21, 128, 61;
+  /* Deep navy/near-black, not pure #000 - a flat black reads harsher and
+     gives the radial glow below nowhere to breathe. */
+  --bg: #0a0e17;
+  --surface: rgba(24, 32, 52, 0.66);
+  /* Opaque equivalent of --surface, for the few spots (the readiness
+     ring's center mask) where translucency would let the conic-gradient
+     underneath show through and break the "ring" illusion. */
+  --surface-solid: #141b2e;
+  --ink: #e7ebf3;
+  --muted: #98a2b8;
+  /* Thin, low-opacity light line - the "soft edge" the reference's cards
+     use instead of a hard visible divider. */
+  --line: rgba(255, 255, 255, 0.10);
+
+  --accent: #4f8dfd;
+  --accent-rgb: 79, 141, 253;
+  /* Brighter (not darker) on hover/active - on a dark ground, an accent-
+     filled control should glow harder when engaged, not go muddy. */
+  --accent-hover: #7badff;
+
+  /* Status colors re-tuned for the dark ground: brighter and more
+     saturated than their light-mode versions so they still read clearly
+     at a glance (all three verified >=6.9:1 against --bg). Each also gets
+     an rgb triple so its "-bg" tint and any border derived from it stay
+     token-driven instead of a hardcoded rgba literal. */
+  --block: #f87171;
+  --block-rgb: 248, 113, 113;
+  --block-bg: rgba(var(--block-rgb), 0.12);
+  --amber: #fbbf24;
+  --amber-rgb: 251, 191, 36;
+  --amber-bg: rgba(var(--amber-rgb), 0.12);
+  --green: #4ade80;
+  --green-rgb: 74, 222, 128;
+  --green-bg: rgba(var(--green-rgb), 0.12);
 
   /* The T1->T8 evidence-tier scale (docs/spec.md section 3), strongest to
      weakest proof - reused anywhere the product wants to gesture at that
      scale (currently just the tier strip on the input page) without ever
-     hardcoding these three colors inline. */
-  --tier-strong: var(--accent);
+     hardcoding these three colors inline. Tied to the semantic
+     green/amber/red trio rather than --accent, so the "strong -> weak"
+     traffic-light reading holds regardless of what the brand accent is. */
+  --tier-strong: var(--green);
   --tier-mid: var(--amber);
   --tier-weak: var(--block);
   --tier-gradient: linear-gradient(to right, var(--tier-strong), var(--tier-mid), var(--tier-weak));
+
+  /* The signature effect: a soft, static (never animated - see Part 2 of
+     the visual-treatment pass this came from) blue glow anchored above the
+     content, fading into --bg. One dominant glow plus a much fainter
+     second one off to the side for a little depth, both derived from
+     --accent-rgb rather than a separate hardcoded hue. */
+  --bg-glow:
+    radial-gradient(1100px 620px at 50% -12%, rgba(var(--accent-rgb), 0.20), transparent 65%),
+    radial-gradient(800px 560px at 88% 18%, rgba(var(--accent-rgb), 0.09), transparent 70%);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -63,6 +94,19 @@ html, body {
   line-height: 1.5;
 }
 
+/* The glow lives on a fixed, full-viewport pseudo-element behind
+   everything (z-index: -1) rather than on .page, so it's anchored to the
+   viewport - not the document - and never scrolls away or tiles oddly on
+   a tall page. Static gradient, no animation. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--bg-glow);
+}
+
 .page {
   max-width: var(--max-width);
   margin: 0 auto;
@@ -73,6 +117,18 @@ html, body {
 }
 
 .site-main { flex: 1; }
+
+/* ---- Glassy card treatment ----------------------------------------------
+   One shared rule for every card-like surface, rather than repeating
+   backdrop-filter/box-shadow in each block below - the blur is what turns
+   a translucent --surface panel into "glass" the glow shows through, and
+   the soft shadow is what lifts it off the page. */
+.form-card, .score-card, .dim-card, .gap-row, .preview-card,
+.blocking-item, .honest-note, .error-box {
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.55);
+}
 
 /* ---- Header / footer ---------------------------------------------------- */
 
@@ -216,7 +272,11 @@ select {
   margin-top: var(--space-6);
   width: 100%;
   background: var(--accent);
-  color: #fff;
+  /* Dark text on the bright accent fill, not white - --accent is light
+     enough that white text falls short of AA (~3.2:1); dark-on-accent
+     clears 6:1+ and is the more common pattern for a saturated fill like
+     this one anyway. */
+  color: var(--bg);
   border: 0;
   padding: 16px 20px;
   border-radius: var(--radius-sm);
@@ -225,7 +285,7 @@ select {
   cursor: pointer;
   transition: background .15s ease;
 }
-.primary-action:hover { background: var(--accent-dark); }
+.primary-action:hover { background: var(--accent-hover); }
 
 /* ---- Evidence-tier scale (input page, ambient) --------------------------- */
 
@@ -286,7 +346,9 @@ select {
   position: absolute;
   inset: 10px;
   border-radius: 50%;
-  background: var(--surface);
+  /* Opaque, not --surface - has to fully mask the conic-gradient behind
+     it to read as a ring, which a translucent glass panel wouldn't do. */
+  background: var(--surface-solid);
 }
 .score-ring-value {
   position: relative;
@@ -386,7 +448,7 @@ select {
   gap: var(--space-3);
   align-items: flex-start;
   background: var(--block-bg);
-  border: 1px solid #fecaca;
+  border: 1px solid rgba(var(--block-rgb), 0.35);
   border-radius: var(--radius-md);
   padding: var(--space-4);
 }
@@ -572,7 +634,7 @@ ul.stages li.done::before {
   content: "\2713";
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   font-size: 11px;
   font-weight: 700;
   display: flex;
@@ -622,8 +684,11 @@ ul.stages li.active::before {
   color: var(--muted);
 }
 .log-panel-body {
-  background: #0d1117;
-  color: #c9d1d9;
+  /* Deliberately the page's own raw --bg, not --surface - the terminal
+     reads as a cut-out window straight back to the void behind the glass
+     card, rather than another translucent panel stacked on top of it. */
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.7;
@@ -635,10 +700,10 @@ ul.stages li.active::before {
 }
 .log-panel-body:empty::before {
   content: "Waiting for the first update…";
-  color: #6e7681;
+  color: var(--muted);
 }
 .log-line .ts {
-  color: #6e7681;
+  color: var(--muted);
   margin-right: var(--space-2);
 }
 
