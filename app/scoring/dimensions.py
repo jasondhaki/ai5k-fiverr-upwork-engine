@@ -321,6 +321,20 @@ def score_completeness(claims: list[Claim], benchmark: Benchmark) -> float:
     produces one, and should be rewritten to check those fields directly.
     Treat this score as PROVISIONAL until then.
     """
+    checklist = completeness_checklist_status(claims, benchmark)
+    present = sum(1 for item in checklist if item["present"])
+    return (present / len(checklist)) * 100.0
+
+
+def completeness_checklist_status(claims: list[Claim], benchmark: Benchmark) -> list[dict[str, object]]:
+    """
+    The exact four checks score_completeness's own checklist sums, surfaced
+    individually (for display - the report page shows a checkmark/X per
+    item instead of a bare "X of 4" count) rather than reimplemented, so this
+    can never quietly disagree with the score itself. `benchmark` is unused
+    (matching score_completeness's own signature, which takes it only for
+    consistency with the other six dimension functions - none of these four
+    checks reference it)."""
     has_identity_history = any(
         c.source_type in (SourceType.CV, SourceType.LINKEDIN_EXPORT) for c in claims
     )
@@ -331,8 +345,12 @@ def score_completeness(claims: list[Claim], benchmark: Benchmark) -> float:
         c.source_type in (SourceType.UPWORK_TEXT, SourceType.ONBOARDING_FORM) for c in claims
     )
 
-    checklist = [has_identity_history, has_portfolio_evidence, has_skill_breadth, has_client_facing_text]
-    return (sum(checklist) / len(checklist)) * 100.0
+    return [
+        {"label": "Identity or work-history evidence (CV / LinkedIn)", "present": has_identity_history},
+        {"label": "Demonstrated project evidence (repo, site, model, demo)", "present": has_portfolio_evidence},
+        {"label": "Breadth of skills (3 or more distinct skills claimed)", "present": has_skill_breadth},
+        {"label": "Client-facing profile text (Upwork / onboarding form)", "present": has_client_facing_text},
+    ]
 
 
 # --- 6. Conversion (8%) --------------------------------------------------------

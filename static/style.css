@@ -461,6 +461,21 @@ select {
 .term-list li.term-present { color: var(--green); border-color: rgba(var(--green-rgb), .35); }
 .term-list li.term-missing { color: var(--muted); }
 
+/* Same present/missing checkmark pattern as .term-list, but a vertical
+   list instead of wrapped pills - the completeness checklist's item labels
+   are full sentences, not short tags, so a pill badge would wrap awkwardly. */
+.checklist {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+.checklist li { font-family: var(--font-mono); font-size: 12px; }
+.checklist li.term-present { color: var(--green); }
+.checklist li.term-missing { color: var(--muted); }
+
 /* A quiet, non-alarming supporting line under a section heading - e.g. the
    "scores reflect your current profile text" note, distinct from .hint
    (form helper text) and .dim-detail (per-card data). */
@@ -560,7 +575,23 @@ select {
   border-radius: 999px;
 }
 
-/* ---- Claim audit trail (templates/claims.html) -------------------------- */
+/* ---- Claim audit trail (templates/_claim_card.html, claims.html) -------- */
+
+/* Native <details>/<summary> - no JS needed to collapse a long unproven-
+   claims list on the report page (claims.html always shows its list open;
+   this only wraps the blocking section's copy, which can be much longer). */
+.claim-list-details { margin-top: var(--space-3); }
+.claim-list-details summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  list-style: none;
+}
+.claim-list-details summary::-webkit-details-marker { display: none; }
+.claim-list-details summary::before { content: "▸ "; }
+.claim-list-details[open] summary::before { content: "▾ "; }
+.claim-list-details .claim-list { margin-top: var(--space-3); }
 
 .claim-list {
   display: flex;

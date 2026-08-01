@@ -7,7 +7,7 @@ then applies the evidence cap as an explicit final step.
 from __future__ import annotations
 
 from app.config.weights import DIMENSION_WEIGHTS
-from app.schemas import Benchmark, Claim, DimensionScore, SourceType
+from app.schemas import Benchmark, Claim, DimensionScore
 from app.scoring.caps import apply_caps
 from app.scoring.dimensions import (
     _NUMBER_PATTERN,
@@ -16,6 +16,7 @@ from app.scoring.dimensions import (
     _ROLE_TITLE_PATTERN,
     _claim_text_pool,
     _contains,
+    completeness_checklist_status,
     keyword_term_status,
     score_completeness,
     score_conversion,
@@ -77,16 +78,9 @@ def _detail(name: str, claims: list[Claim], benchmark: Benchmark) -> str | None:
         return f"{len(item_ids)} item(s), {len(quantified_ids)} quantified"
 
     if name == "completeness":
-        # Mirrors score_completeness's own four-item checklist.
-        has_identity_history = any(c.source_type in (SourceType.CV, SourceType.LINKEDIN_EXPORT) for c in claims)
-        has_portfolio_evidence = any(c.source_type in _PORTFOLIO_SOURCES for c in claims)
-        distinct_skills = {skill for c in claims for skill in c.skill_ids}
-        has_skill_breadth = len(distinct_skills) >= 3
-        has_client_facing_text = any(
-            c.source_type in (SourceType.UPWORK_TEXT, SourceType.ONBOARDING_FORM) for c in claims
-        )
-        present = sum([has_identity_history, has_portfolio_evidence, has_skill_breadth, has_client_facing_text])
-        return f"{present} of 4 checklist items present"
+        checklist = completeness_checklist_status(claims, benchmark)
+        present = sum(1 for item in checklist if item["present"])
+        return f"{present} of {len(checklist)} checklist items present"
 
     if name == "conversion":
         total = len(claims)

@@ -45,7 +45,7 @@ from app.evidence import load_benchmark
 from app.ingestion.extractor import validate_llm_config
 from app.platform.pipeline import PipelineInput, run_pipeline
 from app.platform.status import status_store
-from app.scoring import keyword_term_status
+from app.scoring import completeness_checklist_status, keyword_term_status
 from app.storage.repository import repository
 
 logger = logging.getLogger(__name__)
@@ -176,6 +176,11 @@ def analyze_result(request: Request, run_id: str) -> HTMLResponse:
     required-terms present/missing breakdown, and the rate band, none of
     which Result itself needs to carry since the benchmark is a versioned,
     load-any-time artifact rather than per-run data.
+
+    Also fetches the underlying claims - not just to compute keyword_status,
+    but so the "fix before publishing" section can show exactly which claims
+    are unproven, not just a count, reusing the same claim-card markup as
+    the /claims audit trail (see templates/_claim_card.html).
     """
     result = repository.get_result(run_id)
     if result is None:
@@ -189,6 +194,8 @@ def analyze_result(request: Request, run_id: str) -> HTMLResponse:
             "r": result,
             "benchmark": benchmark,
             "keyword_status": keyword_term_status(claims, benchmark),
+            "completeness_status": completeness_checklist_status(claims, benchmark),
+            "unproven_claims": [c for c in claims if not c.publishable],
         },
     )
 

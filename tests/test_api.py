@@ -220,6 +220,82 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
 # --- /analyze/{run_id}/claims: the claim-level audit trail -------------------
 
 
+def test_unproven_claims_are_persisted_and_rendered_not_filtered_out(monkeypatch):
+    """
+    A claim whose evidence_quote doesn't ground against the source still
+    gets extracted, still gets persisted via save_claims, and must still
+    show up - distinctly marked - on both the claims audit trail and the
+    report page's "fix before publishing" section. Nothing in the Repository
+    or these two routes may filter it out by publishable status.
+    """
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    ingestion_body = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "cut costs by 40 percent",
+                    "skill_ids": ["automation"],
+                    "evidence_quote": "cut costs by 40 percent for a client",
+                },
+                {
+                    "claim_text": "led a team of five engineers",
+                    "skill_ids": ["leadership"],
+                    "evidence_quote": "this exact phrase never appears anywhere in the source text",
+                },
+            ]
+        }
+    )
+
+    class _FakeIngestClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            return ingestion_body
+
+    class _FakeGenClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            return json.dumps({"text": None})
+
+    monkeypatch.setattr(
+        "app.ingestion.upwork_parser.build_default_client", lambda: _FakeIngestClient()
+    )
+    monkeypatch.setattr("app.generation.build_default_client", lambda: _FakeGenClient())
+
+    client = TestClient(app)
+    post_response = client.post(
+        "/analyze",
+        data={
+            "niche": "SMB workflow automation",
+            "upwork_text": "cut costs by 40 percent for a client this year",
+        },
+        follow_redirects=False,
+    )
+    run_id = _run_id_from_redirect(post_response)
+    status = _poll_until_terminal(client, run_id)
+    assert status["stage"] == "done"
+
+    # The repository itself never filters by publishable status.
+    claims = test_repo.get_claims(run_id)
+    assert len(claims) == 2
+    assert sum(1 for c in claims if c.publishable) == 1
+    assert sum(1 for c in claims if not c.publishable) == 1
+
+    # The audit trail shows both, with the ungrounded one clearly marked and
+    # the source-group header split into proven/unproven counts.
+    claims_page = client.get(f"/analyze/{run_id}/claims").text
+    assert "led a team of five engineers" in claims_page
+    assert "NOT PROVEN" in claims_page
+    assert "no matching text found in source" in claims_page
+    assert "1 proven, 1 unproven" in claims_page
+
+    # The report page itemizes the specific unproven claim text, not just a
+    # bare "1 of 2 claims unproven" count.
+    result_page = client.get(f"/analyze/{run_id}/result").text
+    assert "1 of 2 claims unproven" in result_page  # the existing summary line stays
+    assert "led a team of five engineers" in result_page  # the itemized claim text
+    assert "NOT PROVEN" in result_page
+
+
 def test_claims_page_404s_for_an_unknown_run_id(monkeypatch):
     test_repo = _sqlite_repository()
     monkeypatch.setattr("app.platform.api.repository", test_repo)

@@ -11,6 +11,7 @@ import pytest
 
 from app.schemas import Benchmark, Claim, EvidenceTier, RateBand, SourceSpan, SourceType
 from app.scoring.dimensions import (
+    completeness_checklist_status,
     keyword_term_status,
     score_completeness,
     score_conversion,
@@ -270,6 +271,39 @@ def test_completeness_partial_with_only_some_checklist_items():
     claim = _claim("cv text", SourceType.CV, span_text="cv text")
     # has_identity_history=True, everything else False -> 1/4 = 25.0
     assert score_completeness([claim], _benchmark()) == pytest.approx(25.0)
+
+
+def test_completeness_checklist_status_has_exactly_four_items():
+    status = completeness_checklist_status([], _benchmark())
+    assert len(status) == 4
+    assert all({"label", "present"} <= item.keys() for item in status)
+
+
+def test_completeness_checklist_status_matches_score_completeness_present_count():
+    """The present-count this itemized status reports must always agree with
+    score_completeness's own fraction - it's the same four checks, not a
+    second, possibly-diverging way to decide "present"."""
+    claims = [
+        _claim("work history", SourceType.CV, span_text="work history"),
+        _claim("skills", SourceType.CV, skill_ids=["a", "b", "c"], span_text="skills"),
+    ]
+    benchmark = _benchmark()
+
+    status = completeness_checklist_status(claims, benchmark)
+    present_count = sum(1 for item in status if item["present"])
+    score = score_completeness(claims, benchmark)
+
+    assert score == pytest.approx((present_count / 4) * 100.0)
+
+
+def test_completeness_checklist_status_flags_the_right_items_present():
+    claim = _claim("cv text", SourceType.CV, span_text="cv text")
+    status = completeness_checklist_status([claim], _benchmark())
+
+    by_label = {item["label"]: item["present"] for item in status}
+    identity_label = next(l for l in by_label if "identity" in l.lower() or "work-history" in l.lower())
+    assert by_label[identity_label] is True
+    assert sum(1 for present in by_label.values() if present) == 1
 
 
 # --- conversion --------------------------------------------------------------------
