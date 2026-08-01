@@ -41,9 +41,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.config.weights import validate_config
+from app.evidence import load_benchmark
 from app.ingestion.extractor import validate_llm_config
 from app.platform.pipeline import PipelineInput, run_pipeline
 from app.platform.status import status_store
+from app.scoring import keyword_term_status
 from app.storage.repository import repository
 
 logger = logging.getLogger(__name__)
@@ -167,16 +169,50 @@ def analyze_result(request: Request, run_id: str) -> HTMLResponse:
     rewrite - now reached only once a background run has actually finished
     and persisted, via the Repository (there is no other copy of the Result
     lying around once the background task that computed it has returned).
+
+    Re-loads the exact benchmark this Result was scored against (by the
+    (niche, benchmark_version) it stamped at generation time - never "the
+    latest") purely for display: the full per-dimension targets, the
+    required-terms present/missing breakdown, and the rate band, none of
+    which Result itself needs to carry since the benchmark is a versioned,
+    load-any-time artifact rather than per-run data.
     """
     result = repository.get_result(run_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No result found for run_id {run_id!r}")
-    # Presentation-only: lets the dimension bars show a benchmark-target
-    # marker for any dimension that also has a ranked gap, without changing
-    # what Result itself carries.
-    gap_targets = {g.dimension: g.target for g in result.gaps}
+    claims = repository.get_claims(run_id)
+    benchmark = load_benchmark(result.niche, result.benchmark_version)
     return templates.TemplateResponse(
-        request, "result.html", {"r": result, "gap_targets": gap_targets}
+        request,
+        "result.html",
+        {
+            "r": result,
+            "benchmark": benchmark,
+            "keyword_status": keyword_term_status(claims, benchmark),
+        },
+    )
+
+
+@app.get("/analyze/{run_id}/claims", response_class=HTMLResponse)
+def analyze_claims(request: Request, run_id: str) -> HTMLResponse:
+    """
+    The claim-level audit trail behind one report: every claim, its evidence
+    tier, its source, and the literal span text it grounds against - grouped
+    by source the same way scripts/inspect_claims.py already formats for
+    manual review, just rendered for a browser instead of a terminal. This is
+    the system's core promise made checkable: not a summary number, but the
+    actual provenance, reusing data the Repository already persists rather
+    than any new backend logic.
+    """
+    report = repository.get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"No report found for run_id {run_id!r}")
+    result, claims = report
+    grouped: dict[str, list] = {}
+    for claim in claims:
+        grouped.setdefault(claim.source_type.value, []).append(claim)
+    return templates.TemplateResponse(
+        request, "claims.html", {"r": result, "grouped": grouped}
     )
 
 

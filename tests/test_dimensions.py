@@ -11,6 +11,7 @@ import pytest
 
 from app.schemas import Benchmark, Claim, EvidenceTier, RateBand, SourceSpan, SourceType
 from app.scoring.dimensions import (
+    keyword_term_status,
     score_completeness,
     score_conversion,
     score_evidence_quality,
@@ -157,6 +158,34 @@ def test_keyword_coverage_is_0_when_nothing_matches():
 def test_keyword_coverage_defaults_to_full_marks_when_benchmark_has_no_terms():
     benchmark = _benchmark(required_terms=[], benchmark_topics=[])
     assert score_keyword_coverage([], benchmark) == pytest.approx(100.0)
+
+
+def test_keyword_term_status_reports_presence_per_term_not_a_rolled_up_count():
+    text = "Built n8n workflows with webhook triggers."
+    claim = _claim(text, SourceType.GITHUB_REPO, span_text=text)
+    benchmark = _benchmark(required_terms=["n8n", "Make.com", "webhook"], benchmark_topics=[])
+
+    status = keyword_term_status([claim], benchmark)
+
+    assert status == [
+        {"term": "n8n", "present": True},
+        {"term": "Make.com", "present": False},
+        {"term": "webhook", "present": True},
+    ]
+
+
+def test_keyword_term_status_matches_score_keyword_coverage_required_half():
+    """The per-term present count here must agree with what
+    score_keyword_coverage's own required-term half computed - this is the
+    same _contains check, surfaced instead of collapsed into one number."""
+    text = "Built n8n workflows."
+    claim = _claim(text, SourceType.GITHUB_REPO, span_text=text)
+    benchmark = _benchmark(required_terms=["n8n", "Make.com"], benchmark_topics=[])
+
+    status = keyword_term_status([claim], benchmark)
+    present_count = sum(1 for item in status if item["present"])
+
+    assert present_count == 1
 
 
 # --- portfolio_quality -----------------------------------------------------------

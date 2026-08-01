@@ -124,7 +124,7 @@ body::before {
    a translucent --surface panel into "glass" the glow shows through, and
    the soft shadow is what lifts it off the page. */
 .form-card, .score-card, .dim-card, .gap-row, .preview-card,
-.blocking-item, .honest-note, .error-box {
+.blocking-item, .honest-note, .error-box, .claim-card {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.55);
@@ -435,6 +435,40 @@ select {
   border-radius: 1px;
 }
 .dim-detail { color: var(--muted); font-size: 13px; margin-top: var(--space-2); }
+.dim-target {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: var(--space-1);
+}
+
+/* Per-required-term presence chips inside the keyword-coverage card. */
+.term-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+.term-list li {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.term-list li.term-present { color: var(--green); border-color: rgba(var(--green-rgb), .35); }
+.term-list li.term-missing { color: var(--muted); }
+
+/* A quiet, non-alarming supporting line under a section heading - e.g. the
+   "scores reflect your current profile text" note, distinct from .hint
+   (form helper text) and .dim-detail (per-card data). */
+.section-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -8px 0 var(--space-3);
+}
 
 /* ---- Blocking items ------------------------------------------------- */
 
@@ -505,6 +539,99 @@ select {
   height: 100%;
   border-radius: 6px;
 }
+
+/* ---- Skill gaps: a learning signal, framed calmly (spec section 5) -----
+   Deliberately NOT the red/amber blocking-item treatment - this isn't a
+   liability, just "here's what to go build next." Accent-tinted chips,
+   same calm register as .term-present. */
+
+.skill-gap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.skill-gap-chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), .12);
+  border: 1px solid rgba(var(--accent-rgb), .3);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+/* ---- Claim audit trail (templates/claims.html) -------------------------- */
+
+.claim-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.claim-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+.claim-card.claim-unproven { border-style: dashed; }
+.claim-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.tag-tier {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), .12);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.tag-unproven {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.claim-text { font-size: 14px; margin-bottom: var(--space-2); }
+.claim-span {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.claim-span-empty {
+  font-style: italic;
+  background: none;
+  padding: 0;
+}
+.claim-locator {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: var(--space-2);
+}
+
+/* A quiet link to the claim audit trail, from the report page's opening
+   framing paragraph - the single most convincing thing a technical viewer
+   can see, so it's a real link (not buried), but still text-scale, not a
+   competing call to action next to the readiness score. */
+.audit-link {
+  display: inline-block;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.audit-link:hover { text-decoration: underline; }
 
 /* ---- Generated profile preview ---------------------------------------- */
 

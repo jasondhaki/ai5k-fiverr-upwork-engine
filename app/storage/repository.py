@@ -108,6 +108,7 @@ class SqlAlchemyRepository:
                     generation_incomplete=result.generation_incomplete,
                     total_claims=result.total_claims,
                     provable_claims=result.provable_claims,
+                    skill_gaps=list(result.skill_gaps),
                 )
             )
             session.commit()
@@ -132,6 +133,9 @@ class SqlAlchemyRepository:
                 generation_incomplete=row.generation_incomplete,
                 total_claims=row.total_claims,
                 provable_claims=row.provable_claims,
+                # `or []` covers rows written before this column existed -
+                # see ResultRecord.skill_gaps's comment.
+                skill_gaps=row.skill_gaps or [],
             )
 
     # --- claims ------------------------------------------------------------

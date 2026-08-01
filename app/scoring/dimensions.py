@@ -219,6 +219,22 @@ def score_keyword_coverage(claims: list[Claim], benchmark: Benchmark) -> float:
     return (KEYWORD_REQUIRED_WEIGHT * required_score + KEYWORD_SEMANTIC_WEIGHT * semantic_score) * 100.0
 
 
+def keyword_term_status(claims: list[Claim], benchmark: Benchmark) -> list[dict[str, object]]:
+    """
+    Per-required-term presence, for display (the report page lists which
+    required terms are present vs missing explicitly, not just a rolled-up
+    score) - the exact same _contains check score_keyword_coverage's
+    required-term half already runs internally, just surfaced per-term
+    instead of collapsed into one aggregate number. Order matches
+    benchmark.required_terms.
+    """
+    pool_lower = _claim_text_pool(claims).lower()
+    return [
+        {"term": term, "present": _contains(term, pool_lower)}
+        for term in benchmark.required_terms
+    ]
+
+
 # --- 4. Portfolio quality (15%) -----------------------------------------------
 
 # Source types where the evidence IS a portfolio item - a deployed repo, a

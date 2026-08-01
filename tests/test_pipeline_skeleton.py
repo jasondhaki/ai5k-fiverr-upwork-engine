@@ -84,6 +84,16 @@ def test_benchmark_version_on_result_matches_the_loaded_benchmark():
     assert result.benchmark_version == "2026-07"
 
 
+def test_skill_gaps_populated_end_to_end_with_zero_claims():
+    """With no evidence at all, every required term/topic in the real
+    SMB-automation benchmark is a gap - and it must be a plain list on
+    Result, never affecting the (already-asserted-capped) readiness."""
+    result = run_pipeline(PipelineInput(niche="SMB workflow automation"))
+    assert result.skill_gaps  # non-empty - nothing covers anything with 0 claims
+    assert "n8n" in result.skill_gaps
+    assert isinstance(result.skill_gaps, list)
+
+
 def test_generation_incomplete_is_surfaced_on_the_result_when_retries_exhaust(monkeypatch):
     """
     End-to-end proof that a real report can distinguish "generation kept

@@ -35,6 +35,7 @@ from app.schemas import (
     GeneratedAsset,
     Result,
 )
+from app.scoring import find_skill_gaps as _find_skill_gaps
 from app.scoring import rank_gaps as _rank_gaps
 from app.scoring import score_profile as _score_profile
 from app.storage.repository import Repository
@@ -177,6 +178,13 @@ def run_pipeline(
             on_status(stage="scoring", detail="Scoring profile and ranking gaps")
         dimensions, readiness, capped = score_profile(claims, benchmark)
         gaps, blocking = rank_gaps(claims, dimensions, benchmark)
+        # A separate, UNSCORED report (spec section 5) - never a scoring
+        # dimension, never consulted by score_profile/rank_gaps above, and
+        # never a factor in `readiness`. Computed independently and attached
+        # to the same Result purely for convenience; see Result.skill_gaps
+        # and app/scoring/skill_gaps.py for why it can't quietly bleed into
+        # scoring by construction (it isn't imported by either module).
+        skill_gaps = _find_skill_gaps(claims, benchmark)
 
         if on_status is not None:
             on_status(stage="generating", detail="Generating title and overview")
@@ -201,6 +209,7 @@ def run_pipeline(
             generation_incomplete=generation_incomplete,
             total_claims=len(claims),
             provable_claims=provable,
+            skill_gaps=skill_gaps,
         )
 
         if repository is not None:

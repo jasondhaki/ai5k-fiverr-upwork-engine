@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Claim audit &middot; {{ r.niche }}{% endblock %}
+
+{% block content %}
+<h1>Claim audit trail</h1>
+<p class="lead">
+  Every claim behind this report, grouped by source, with its evidence tier
+  and the literal span it grounds against &mdash; the same provenance the
+  scoring above is computed from, not a summary of it.
+</p>
+
+{% if not grouped %}
+<p class="section-note">No claims were recorded for this run.</p>
+{% endif %}
+
+{% for source_type, claims in grouped.items() %}
+<h2>{{ source_type.replace('_', ' ')|title }} ({{ claims|length }})</h2>
+<div class="claim-list">
+  {% for c in claims %}
+  <div class="claim-card{{ ' claim-unproven' if not c.source_span else '' }}">
+    <div class="claim-head">
+      <span class="tag-tier">{{ c.evidence_tier.value }}</span>
+      {% if not c.source_span %}<span class="tag-unproven">UNGROUNDED</span>{% endif %}
+    </div>
+    <div class="claim-text">{{ c.claim_text }}</div>
+    {% if c.source_span %}
+    <div class="claim-span">&ldquo;{{ c.source_span.text }}&rdquo;</div>
+    <div class="claim-locator">{{ c.source_span.locator or 'n/a' }}</div>
+    {% else %}
+    <div class="claim-span claim-span-empty">
+      No source span &mdash; dropped to a coaching prompt, never published.
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+
+<a class="back" href="/analyze/{{ r.run_id }}/result">&larr; Back to report</a>
+{% endblock %}

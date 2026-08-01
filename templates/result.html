@@ -18,10 +18,14 @@
       and can prove {{ r.provable_claims }}. Below is the fastest route to proving more.
     </p>
     {% if r.capped %}<div class="honest-note">{{ r.cap_note }}</div>{% endif %}
+    {% if r.run_id %}
+    <a class="audit-link" href="/analyze/{{ r.run_id }}/claims">See all {{ r.total_claims }} claims and their sources &rarr;</a>
+    {% endif %}
   </div>
 </div>
 
 <h2>Dimensions</h2>
+<p class="section-note">Scores reflect your current profile text, before the rewrite below.</p>
 <div class="dim-list">
   {% for d in r.dimensions %}
   <div class="dim-card">
@@ -31,11 +35,28 @@
     </div>
     <div class="dim-bar-track">
       <div class="dim-bar-fill" style="width: {{ d.score }}%;"></div>
-      {% if gap_targets and gap_targets.get(d.name) %}
-      <div class="dim-bar-target" style="left: {{ gap_targets[d.name] }}%;" title="Benchmark target: {{ gap_targets[d.name]|int }}"></div>
+      {% if benchmark and benchmark.dimension_targets.get(d.name) is not none %}
+      <div class="dim-bar-target" style="left: {{ benchmark.dimension_targets[d.name] }}%;" title="Benchmark target: {{ benchmark.dimension_targets[d.name]|int }}"></div>
       {% endif %}
     </div>
     {% if d.detail %}<div class="dim-detail">{{ d.detail }}</div>{% endif %}
+    {% if benchmark and benchmark.dimension_targets.get(d.name) is not none %}
+    <div class="dim-target">Target: {{ benchmark.dimension_targets[d.name]|int }}</div>
+    {% endif %}
+
+    {% if d.name == 'keyword_coverage' and keyword_status %}
+    <ul class="term-list">
+      {% for item in keyword_status %}
+      <li class="{{ 'term-present' if item.present else 'term-missing' }}">
+        {{ '✓' if item.present else '✗' }} {{ item.term }}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if d.name == 'pricing_strategy' and benchmark %}
+    <div class="dim-target">Evidence supports ${{ benchmark.rate_band.low|int }}&ndash;${{ benchmark.rate_band.high|int }}/hr</div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
@@ -73,6 +94,19 @@
       <div class="gap-intensity-fill" style="width: {{ ((g.priority / max_priority) * 100) if max_priority else 0 }}%;"></div>
     </div>
   </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if r.skill_gaps %}
+<h2>What to build next</h2>
+<p class="section-note">
+  Skills the top tier in this niche typically shows that don't yet appear anywhere
+  in your evidence &mdash; not scored, not a fix, just a learning signal.
+</p>
+<div class="skill-gap-list">
+  {% for skill in r.skill_gaps %}
+  <span class="skill-gap-chip">{{ skill }}</span>
   {% endfor %}
 </div>
 {% endif %}

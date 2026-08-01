@@ -119,4 +119,10 @@ class ResultRecord(Base):
     total_claims: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     provable_claims: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Nullable (not default=list-backed NOT NULL) specifically so the Alembic
+    # migration adding this column never has to backfill a value onto rows
+    # that already exist in a real deployed database - see that migration's
+    # own comment. get_result treats a NULL row here identically to [].
+    skill_gaps: Mapped[list | None] = mapped_column(JSONB_OR_JSON, nullable=True, default=list)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

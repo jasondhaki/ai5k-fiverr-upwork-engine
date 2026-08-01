@@ -197,6 +197,35 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     # Checks the underlying data made it onto the page, not exact markup -
     # matches the claims_found/claims_provable counts asserted above.
     assert "can prove 1" in result_page.text
+    # Benchmark data pulled in for display (not stored on Result itself) -
+    # the pricing dimension's rate band and at least one dimension's target.
+    assert "Evidence supports $50" in result_page.text
+    assert "Target:" in result_page.text
+    # None of "cut costs by 40 percent" matches any required term/topic in
+    # the real SMB-automation benchmark, so the skill-gap section - a report,
+    # never a scoring dimension - should list at least one of them.
+    assert "What to build next" in result_page.text
+    assert "n8n" in result_page.text
+    # The audit-trail link, pointing at the same run_id.
+    assert f"/analyze/{run_id}/claims" in result_page.text
+
+    # The claim audit trail itself: same run_id, real claim/tier/span data.
+    claims_page = client.get(f"/analyze/{run_id}/claims")
+    assert claims_page.status_code == 200
+    assert "cut costs by 40 percent" in claims_page.text
+    assert "T" in claims_page.text  # some evidence tier tag renders
+    assert "cut costs by 40 percent for a client" in claims_page.text  # the span text
+
+
+# --- /analyze/{run_id}/claims: the claim-level audit trail -------------------
+
+
+def test_claims_page_404s_for_an_unknown_run_id(monkeypatch):
+    test_repo = _sqlite_repository()
+    monkeypatch.setattr("app.platform.api.repository", test_repo)
+
+    client = TestClient(app)
+    assert client.get("/analyze/does-not-exist/claims").status_code == 404
 
 
 # --- /report/{run_id}: unchanged JSON contract -------------------------------

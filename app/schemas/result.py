@@ -134,3 +134,15 @@ class Result(BaseModel):
     # can prove 2"), which leads with position and route, never a bare figure.
     total_claims: int = 0
     provable_claims: int = 0
+
+    skill_gaps: list[str] = Field(
+        default_factory=list,
+        description="Spec section 5: 'which skills the top tier holds that a user "
+        "lacks... a learning signal, not a profile-writing fix.' Benchmark "
+        "required_terms/benchmark_topics with NO matching claim anywhere in the "
+        "user's evidence (see app/scoring/skill_gaps.py). Deliberately NOT a "
+        "scoring dimension and NEVER a factor in `readiness` - unlike `gaps`, "
+        "which ranks how to present evidence that already exists, this reports "
+        "capability gaps where no evidence exists yet, so nobody is penalized "
+        "for a skill they simply haven't built.",
+    )

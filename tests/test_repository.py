@@ -95,6 +95,7 @@ def _sample_result() -> Result:
         generation_incomplete=True,
         total_claims=3,
         provable_claims=1,
+        skill_gaps=["vector database", "error handling and retries"],
     )
 
 
@@ -128,6 +129,35 @@ def test_save_and_get_result_round_trips_every_field(repo: SqlAlchemyRepository)
     assert fetched.blocking[0].reason == BlockingReason.UNPROVEN_CLAIM
     assert fetched.gaps[0].priority == 2.0
     assert fetched.generated[0].kind == "title"
+    assert fetched.skill_gaps == ["vector database", "error handling and retries"]
+
+
+def test_get_result_treats_a_legacy_null_skill_gaps_column_as_empty_list(
+    repo: SqlAlchemyRepository,
+):
+    """A row written before this column existed (or any row where it's NULL)
+    must read back as [], never None or a crash - see ResultRecord.skill_gaps
+    and the migration adding it, both nullable with no backfill by design."""
+    from app.storage.models import ResultRecord
+
+    with repo._session_factory() as session:
+        session.add(
+            ResultRecord(
+                id="legacy-row",
+                niche="SMB workflow automation",
+                benchmark_version="2026-07",
+                readiness=50.0,
+                capped=False,
+                dimensions=[],
+                skill_gaps=None,
+            )
+        )
+        session.commit()
+
+    fetched = repo.get_result("legacy-row")
+
+    assert fetched is not None
+    assert fetched.skill_gaps == []
 
 
 def test_get_result_returns_none_for_an_unknown_id(repo: SqlAlchemyRepository):

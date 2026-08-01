@@ -16,6 +16,7 @@ from app.scoring.dimensions import (
     _ROLE_TITLE_PATTERN,
     _claim_text_pool,
     _contains,
+    keyword_term_status,
     score_completeness,
     score_conversion,
     score_evidence_quality,
@@ -59,11 +60,10 @@ def _detail(name: str, claims: list[Claim], benchmark: Benchmark) -> str | None:
         return f"{provable} of {total} claims proven" if total else "No claims yet"
 
     if name == "keyword_coverage":
-        pool_lower = _claim_text_pool(claims).lower()
         if not benchmark.required_terms:
             return "No required terms in this benchmark"
-        present = sum(1 for term in benchmark.required_terms if _contains(term, pool_lower))
-        missing = len(benchmark.required_terms) - present
+        status = keyword_term_status(claims, benchmark)
+        missing = sum(1 for item in status if not item["present"])
         return "All required terms present" if missing == 0 else f"Missing {missing} required terms"
 
     if name == "portfolio_quality":
