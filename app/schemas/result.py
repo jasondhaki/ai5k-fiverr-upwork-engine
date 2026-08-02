@@ -38,6 +38,16 @@ class DimensionScore(BaseModel):
     detail: Optional[str] = Field(
         None, description="Human-readable 'you now' summary, e.g. '2 of 11 claims proven'"
     )
+    provisional: bool = Field(
+        False,
+        description="True when this dimension is a heuristic estimate over raw evidence "
+        "text rather than a direct measurement - e.g. positioning/completeness/conversion/"
+        "pricing_strategy, which stand in for an authored profile object (title, overview, "
+        "stated rate) that doesn't exist yet (see app/scoring/dimensions.py's PROVISIONAL "
+        "docstrings). Derived from that exact same docstring marker at score time (see "
+        "app/scoring/dimensions.is_provisional) - never a second, separately maintained "
+        "list, so it cannot drift out of sync with which functions are actually provisional.",
+    )
 
 
 class BlockingItem(BaseModel):
@@ -87,6 +97,15 @@ class GeneratedAsset(BaseModel):
     validated: bool = Field(
         False, description="True only after the span validator has passed it"
     )
+    tier_verified: bool = Field(
+        True,
+        description="True when every claim backing this asset's text is T1-T4 "
+        "(third-party corroborated) evidence. False when it draws on T5-T8 "
+        "(self-declared or weakly-endorsed) evidence too - the UI must not "
+        "present that as independently 'verified'. Always explicitly set by "
+        "validate_asset (the only constructor); default True only covers "
+        "hand-built instances elsewhere, e.g. in tests.",
+    )
 
 
 class Result(BaseModel):
@@ -128,6 +147,15 @@ class Result(BaseModel):
         "having no evidence to draft from at all, which leaves this False. A diagnosability "
         "signal only, not user-facing messaging: without it, a user seeing no generated "
         "title has no way to tell 'nothing to generate yet' from 'generation kept failing'.",
+    )
+    overview_blocked_by_evidence_tier: bool = Field(
+        False,
+        description="True when no overview was attempted at all because there is no "
+        "T1-T4 (third-party corroborated) evidence anywhere in the claims to draw proof "
+        "from - distinct from generation_incomplete (attempted, then failed validation) "
+        "and from simply having zero claims (a special case of this same condition). "
+        "User-facing: drives a calm, route-forward explanation instead of an unexplained "
+        "blank space where the overview would be.",
     )
 
     # Provenance counts for the UI's opening framing ("you have 11 claims and

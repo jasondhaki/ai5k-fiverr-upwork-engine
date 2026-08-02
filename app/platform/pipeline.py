@@ -24,6 +24,7 @@ from typing import Callable
 from app.evidence import assign_tiers as _assign_tiers
 from app.evidence import load_benchmark as _load_benchmark
 from app.generation import generate_assets as _generate_assets
+from app.generation.generator import PROOF_TIERS
 from app.ingestion.extractor import status_reporting
 from app.ingestion.router import route_input
 from app.schemas import (
@@ -35,6 +36,7 @@ from app.schemas import (
     GeneratedAsset,
     Result,
 )
+from app.scoring import cap_reason as _cap_reason
 from app.scoring import find_skill_gaps as _find_skill_gaps
 from app.scoring import rank_gaps as _rank_gaps
 from app.scoring import score_profile as _score_profile
@@ -192,6 +194,18 @@ def run_pipeline(
 
         provable = sum(1 for c in claims if c.publishable)
 
+        # Distinct from generation_incomplete (attempted, then failed
+        # validation): True only when no overview was even ATTEMPTED because
+        # there is no T1-T4 (third-party corroborated) evidence anywhere to
+        # draw proof from - see generate_overview_draft's own early return.
+        # Without this, that case is indistinguishable from "generation just
+        # silently produced nothing" on the result page (see PROOF_TIERS'
+        # docstring in app/generation/generator.py for why T1-T4 specifically).
+        overview_present = any(a.kind == "overview" for a in generated)
+        overview_blocked_by_evidence_tier = not overview_present and not any(
+            c.publishable and c.evidence_tier in PROOF_TIERS for c in claims
+        )
+
         result = Result(
             run_id=run_id,
             niche=inp.niche,
@@ -201,12 +215,13 @@ def run_pipeline(
             benchmark_version=benchmark.version,
             readiness=readiness,
             capped=capped,
-            cap_note="Capped at 30 until claims are proven" if capped else None,
+            cap_note=_cap_reason(claims) if capped else None,
             dimensions=dimensions,
             blocking=blocking,
             gaps=gaps,
             generated=generated,
             generation_incomplete=generation_incomplete,
+            overview_blocked_by_evidence_tier=overview_blocked_by_evidence_tier,
             total_claims=len(claims),
             provable_claims=provable,
             skill_gaps=skill_gaps,

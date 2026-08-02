@@ -100,15 +100,35 @@ class _OverviewResponse(BaseModel):
     text: str | None = None
 
 
-def _title_system_prompt(benchmark: Benchmark) -> str:
+def _title_system_prompt(benchmark: Benchmark, tier_verified: bool) -> str:
+    # Spec section 3: T8 ("self-declared, with no corroboration") is not the
+    # same claim as "grounded to a source span" - a title can be perfectly
+    # well-grounded (every number traces to a real quote) while that quote is
+    # still just the user's own unverified sentence about themselves. Words
+    # like "proven"/"verified"/"guaranteed" assert THIRD-PARTY corroboration,
+    # which only T1-T4 evidence actually has - so the instruction here tracks
+    # tier_verified, not groundedness. validate_asset enforces this
+    # independently too (see _PROOF_IMPLYING_PATTERN in validator.py), the
+    # same belt-and-suspenders pattern PROOF_TIERS already uses for overviews.
+    proof_language_rule = (
+        "The evidence below is independently corroborated (T1-T4), so "
+        "proof-implying language like 'proven' or 'verified' is fine if it "
+        "fits the outcome."
+        if tier_verified
+        else "The evidence below is self-declared, with no third-party "
+        "corroboration - NEVER use proof-implying language such as "
+        "'proven', 'verified', or 'guaranteed'. State the outcome plainly "
+        "instead (e.g. 'cut costs by 40%', not 'proven to cut costs by 40%')."
+    )
     return (
         f"You write a one-line professional title for a freelancer in the "
         f"niche '{benchmark.niche}'. Follow this exact structure: "
         f"{benchmark.title_formula}. Use ONLY the evidence given below - "
         f"never invent a role, outcome, or number that isn't in it. If the "
         f"evidence doesn't support a specific measurable outcome, omit the "
-        f'outcome rather than inventing one. Return ONLY JSON matching '
-        f'{{"text": str}}. No prose, no markdown fences - JSON only.'
+        f"outcome rather than inventing one. {proof_language_rule} Return "
+        f'ONLY JSON matching {{"text": str}}. No prose, no markdown fences - '
+        f"JSON only."
     )
 
 
@@ -137,8 +157,11 @@ def generate_title_draft(
     if not title_claims:
         return None
 
+    tier_verified = all(c.evidence_tier in PROOF_TIERS for c in title_claims)
     evidence_block = "\n".join(f"- {c.source_span.text}" for c in title_claims)
-    raw = client.complete(system=_title_system_prompt(benchmark), prompt=evidence_block)
+    raw = client.complete(
+        system=_title_system_prompt(benchmark, tier_verified), prompt=evidence_block
+    )
     try:
         parsed = _TitleResponse.model_validate(json.loads(raw))
     except (json.JSONDecodeError, ValidationError):

@@ -27,11 +27,20 @@
 
 <h2>Dimensions</h2>
 <p class="section-note">Scores reflect your current profile text, before the rewrite below.</p>
+<p class="section-note">
+  Some dimensions below are measured directly from your evidence. Others,
+  marked <span class="badge-provisional">Estimated</span>, are inferred from
+  your available claims until a full rewritten profile exists to measure
+  directly &mdash; both are shown so you know which is which.
+</p>
 <div class="dim-list">
   {% for d in r.dimensions %}
   <div class="dim-card">
     <div class="dim-head">
-      <span class="dim-name">{{ d.name.replace('_', ' ')|title }}</span>
+      <span class="dim-name">
+        {{ d.name.replace('_', ' ')|title }}
+        {% if d.provisional %}<span class="badge-provisional" title="Estimated from available evidence, not measured directly">Estimated</span>{% endif %}
+      </span>
       <span class="dim-score">{{ d.score|int }}</span>
     </div>
     <div class="dim-bar-track">
@@ -56,7 +65,11 @@
     {% endif %}
 
     {% if d.name == 'pricing_strategy' and benchmark %}
-    <div class="dim-target">Evidence supports ${{ benchmark.rate_band.low|int }}&ndash;${{ benchmark.rate_band.high|int }}/hr</div>
+    <div class="dim-target">
+      Top tier in this niche charges ${{ benchmark.rate_band.low|int }}&ndash;${{ benchmark.rate_band.high|int }}/hr
+      with {{ benchmark.rate_band.justifying_tiers|join('/') }} evidence
+      &mdash; benchmark context, not a conclusion about your own evidence (see above).
+    </div>
     {% endif %}
 
     {% if d.name == 'completeness' and completeness_status %}
@@ -103,6 +116,14 @@
   </div>
 </details>
 {% endif %}
+{% else %}
+<h2>Fix before publishing</h2>
+<div class="honest-note">
+  No unproven claims found &mdash; that's the one pre-publish check this
+  report runs today. Terms-of-service risk and identity verification aren't
+  checked yet (there's no signal for either in this data), so this isn't a
+  full clearance on those &mdash; only on unproven claims.
+</div>
 {% endif %}
 
 {% if r.gaps %}
@@ -135,7 +156,7 @@
 </div>
 {% endif %}
 
-{% if r.generated or r.generation_incomplete %}
+{% if r.generated or r.generation_incomplete or r.overview_blocked_by_evidence_tier %}
 <h2>Rewritten profile</h2>
 <div class="preview-card">
   <div class="preview-card-chrome">
@@ -146,7 +167,13 @@
   <div class="preview-block">
     <div class="preview-kind">{{ a.kind }}</div>
     <div class="preview-text">{{ a.text }}</div>
-    {% if a.validated %}<span class="badge-validated">&#10003; Verified against source</span>{% endif %}
+    {% if a.validated %}
+      {% if a.tier_verified %}
+      <span class="badge-validated">&#10003; Verified against source</span>
+      {% else %}
+      <span class="badge-self-declared">Traced to your own statement &mdash; not independently verified</span>
+      {% endif %}
+    {% endif %}
   </div>
   {% endfor %}
   {% if r.generation_incomplete %}
@@ -155,6 +182,17 @@
       Generation didn't produce a full result this run, so nothing is shown
       here rather than a fabricated placeholder. Nothing else on this page is
       affected &mdash; try again once you've added more provable claims.
+    </div>
+  </div>
+  {% endif %}
+  {% if r.overview_blocked_by_evidence_tier %}
+  <div class="preview-block">
+    <div class="honest-note" style="margin-top:0;">
+      No overview yet &mdash; writing one needs at least one claim backed by
+      third-party evidence (a demonstrated project, a client-verified outcome,
+      a platform assessment, or a proctored certification). Nothing in your
+      current evidence reaches that bar yet. Add one of those and an overview
+      generates automatically on the next run.
     </div>
   </div>
   {% endif %}

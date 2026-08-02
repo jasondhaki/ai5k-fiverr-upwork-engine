@@ -126,6 +126,95 @@ def test_title_generation_returns_nothing_when_no_claim_has_a_numeric_outcome():
     assert incomplete is False
 
 
+# --- Title: tier-aware "verified" badge + proof-implying language guard -----
+#
+# Spec section 3: T8 is "self-declared, with no corroboration" - a claim can
+# be perfectly well-grounded (a real, verbatim quote) while still being
+# nothing but the user's own unverified sentence about themselves. A title
+# reading "Proven" / "Verified" off ONLY that kind of evidence overclaims
+# exactly what the evidence cap exists to prevent.
+
+
+def test_title_asset_is_tier_verified_when_backed_only_by_proof_tier_evidence():
+    claim = _stored_claim(
+        "Cut retrieval latency by 40% for a legal-tech client", tier=EvidenceTier.T2, weight=0.85
+    )
+    benchmark = _benchmark()
+    body = json.dumps({"text": "RAG Engineer - Legal Tech - cut retrieval latency by 40%"})
+
+    assets, _incomplete = generate_assets([claim], benchmark, client=_StaticClient(body))
+
+    titles = [a for a in assets if a.kind == "title"]
+    assert len(titles) == 1
+    assert titles[0].tier_verified is True
+
+
+def test_title_asset_is_not_tier_verified_when_backed_only_by_self_declared_evidence():
+    claim = _stored_claim("Cut costs by 40% for clients", tier=EvidenceTier.T8, weight=0.15)
+    benchmark = _benchmark()
+    body = json.dumps({"text": "Automation Specialist - SMB - cut costs by 40%"})
+
+    assets, _incomplete = generate_assets([claim], benchmark, client=_StaticClient(body))
+
+    titles = [a for a in assets if a.kind == "title"]
+    assert len(titles) == 1
+    assert titles[0].tier_verified is False
+
+
+def test_validate_asset_rejects_proof_implying_language_backed_only_by_self_declared_evidence():
+    weak_claim = _stored_claim("Cut costs by 40% for clients", tier=EvidenceTier.T8, weight=0.15)
+    draft = DraftAsset(
+        kind="title",
+        text="Automation Specialist - Proven to cut costs by 40%",
+        claim_refs=[weak_claim],
+    )
+
+    with pytest.raises(AssetValidationError, match="proof-implying"):
+        validate_asset(draft)
+
+
+def test_validate_asset_accepts_proof_implying_language_backed_by_proof_tier_evidence():
+    strong_claim = _stored_claim("Cut costs by 40% for clients", tier=EvidenceTier.T2, weight=0.85)
+    draft = DraftAsset(kind="title", text="Verified to cut costs by 40%", claim_refs=[strong_claim])
+
+    asset = validate_asset(draft)
+
+    assert asset.validated is True
+    assert asset.tier_verified is True
+
+
+def test_title_generation_with_t8_only_evidence_never_publishes_proof_implying_language():
+    """End-to-end adversarial case: a T8-only claim set with a numeric
+    outcome, and a client that ALWAYS answers with overclaiming language
+    (simulating the model ignoring the prompt's own instruction not to). The
+    validator's independent check must still catch and drop it - never
+    silently publish 'Proven'/'Verified' backed by nothing but a self-
+    declared sentence."""
+    claim = _stored_claim("Cut costs by 40% for a client", tier=EvidenceTier.T8, weight=0.15)
+    benchmark = _benchmark()
+
+    class _AlwaysOverclaimsClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, *, system: str, prompt: str) -> str:
+            self.calls += 1
+            return json.dumps({"text": "Automation Specialist - Proven 40% Cost Cuts"})
+
+    client = _AlwaysOverclaimsClient()
+    assets, incomplete = generate_assets([claim], benchmark, client=client)
+
+    titles = [a for a in assets if a.kind == "title"]
+    assert titles == []  # dropped, never published with proof-implying language
+    assert client.calls == 2  # both retry attempts actually ran
+    assert incomplete is True
+    for asset in assets:
+        text_lower = asset.text.lower()
+        assert "proven" not in text_lower
+        assert "verified" not in text_lower
+        assert "guaranteed" not in text_lower
+
+
 # --- Title: fabricated number is caught (the adversarial case) --------------
 
 

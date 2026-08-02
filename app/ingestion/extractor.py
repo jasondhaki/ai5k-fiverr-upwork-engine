@@ -1,9 +1,16 @@
 """
 The parallel LLM extractor: turns raw source text into candidate claims.
 
-Three small, independent passes run per document - identity, history, skills -
-each schema-validated and retried once on failure. The model never returns
-claim text to trust blindly: it returns a verbatim quote copied from the exact
+Up to three small, independent passes run per document - identity, history,
+skills - each schema-validated and retried once on failure. Which passes
+actually run is chosen per source_type (see _PASSES_BY_SOURCE below): a CV
+carries role, project history, AND a skills list, so it gets all three, but a
+GitHub README has no identity language to find and a pasted Upwork summary
+has no separate work-history section beyond what identity/skills already
+cover - running a pass that structurally cannot find anything for that source
+type only spends an LLM call to relearn what the source_type already implies.
+The model never returns claim text to trust blindly: it returns a verbatim
+quote copied from the exact
 text it was given, and the caller locates that quote via plain string search
 and re-slices the literal substring via `ground_span`. The model is NOT asked
 to compute character indices - LLMs are reliably bad at that arithmetic even
@@ -368,6 +375,39 @@ _PASS_INSTRUCTIONS: dict[str, str] = {
     "skills": "Find claims that name a specific skill, tool, or technology the person used.",
 }
 
+# Which of the three passes above are actually worth running per source_type -
+# each pass costs one LLM call, and running all three unconditionally is what
+# turns a 20-repo GitHub profile into 60 calls, the dominant cost against a
+# free-tier rate limit (CLAUDE.md, "Cut Groq calls substantially").
+#
+# GITHUB_REPO drops "identity": a repo README documents a PROJECT, not a
+# person - it has no role/title/seniority language to find at all (the
+# identity pass's own instruction above asks for "e.g. 'Senior backend
+# engineer'", which does not occur in project documentation). This is not
+# just a plausibility argument: _provisional_tier's own lookup table
+# (_PROVISIONAL_TIER_BY_SOURCE, below) already assigns GITHUB_REPO claims T2
+# regardless of which pass produced them - ingestion never even branches on
+# pass_name for this source_type - so no downstream logic depends on an
+# identity-pass result existing for a repo. UPWORK_TEXT drops "history": the
+# pasted text is the freelancer's own overview/summary, which the identity
+# and skills passes already cover (role framing, named tools); dedicated
+# project-history detail lives in the CV and in GitHub's own repos, not
+# reproduced a third time here. CV keeps all three - it is the one source
+# that genuinely carries role, project history, AND a skills list, each
+# worth its own targeted pass (and _provisional_tier's CV branch already
+# depends on distinguishing the "history" pass from the "skills" pass).
+#
+# Any source_type not listed here (LINKEDIN_EXPORT, PORTFOLIO_SITE, etc. -
+# none of which route_input dispatches to yet) falls back to all three passes
+# via _DEFAULT_PASSES, matching the pre-existing behavior exactly rather than
+# guessing at a narrower set for sources this codebase doesn't parse yet.
+_DEFAULT_PASSES: tuple[str, ...] = ("identity", "history", "skills")
+_PASSES_BY_SOURCE: dict[SourceType, tuple[str, ...]] = {
+    SourceType.CV: ("identity", "history", "skills"),
+    SourceType.UPWORK_TEXT: ("identity", "skills"),
+    SourceType.GITHUB_REPO: ("history", "skills"),
+}
+
 _PROVISIONAL_TIER_BY_SOURCE: dict[SourceType, EvidenceTier] = {
     SourceType.GITHUB_REPO: EvidenceTier.T2,  # a repo is a demonstrated project
     SourceType.CV: EvidenceTier.T6,  # employer-confirmed work history, by default
@@ -530,16 +570,17 @@ def extract_candidate_claims(
 
     _source_label.set(locator_prefix or source_type.value)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(_PASS_INSTRUCTIONS)) as pool:
+    pass_names = _PASSES_BY_SOURCE.get(source_type, _DEFAULT_PASSES)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass_names)) as pool:
         # A fresh copy_context() per submission, not one shared Context reused
-        # across all three - a single Context object raises RuntimeError
+        # across all of them - a single Context object raises RuntimeError
         # ("already entered") if .run() executes concurrently from more than
-        # one thread at once, which three simultaneous passes would trigger
+        # one thread at once, which simultaneous passes would trigger
         # immediately. Independent copies of the same snapshotted value are
         # safe to run concurrently; a single shared one is not (verified).
         futures = {
             pool.submit(contextvars.copy_context().run, _run_pass, client, pass_name, text): pass_name
-            for pass_name in _PASS_INSTRUCTIONS
+            for pass_name in pass_names
         }
         batches = [(futures[future], future.result()) for future in concurrent.futures.as_completed(futures)]
 

@@ -9,7 +9,7 @@ import pytest
 
 from app.config.weights import EVIDENCE_DIMENSION_CAP, READINESS_CAP_WHEN_UNPROVEN
 from app.schemas import Claim, DimensionScore, EvidenceTier, SourceSpan, SourceType
-from app.scoring.caps import all_claims_self_declared, apply_caps
+from app.scoring.caps import all_claims_self_declared, apply_caps, cap_reason
 
 
 def _span(text: str) -> SourceSpan:
@@ -127,6 +127,38 @@ def test_non_evidence_dimensions_are_never_capped():
 
     positioning_dim = next(d for d in capped_dimensions if d.name == "positioning")
     assert positioning_dim.score == pytest.approx(95.0)
+
+
+# --- cap_reason: the message must name the REAL condition that fired --------
+
+
+def test_cap_reason_for_an_empty_profile_mentions_no_evidence():
+    reason = cap_reason([])
+    assert "no evidence" in reason.lower()
+    assert "self-declared" not in reason.lower()
+
+
+def test_cap_reason_for_self_declared_claims_mentions_self_declared_not_unproven():
+    """The exact bug this guards against: a claim can be grounded (a real,
+    verbatim quote) and STILL be T8 (self-declared - no third-party
+    corroboration). The message must say THAT, not the misleading 'until
+    claims are proven', which conflates groundedness with corroboration."""
+    grounded_but_self_declared = Claim(
+        claim_text="I am a great developer",
+        source_type=SourceType.UPWORK_TEXT,
+        source_span=_span("I am a great developer"),
+        evidence_tier=EvidenceTier.T8,
+        weight=0.15,
+    )
+    reason = cap_reason([grounded_but_self_declared])
+    assert "self-declared" in reason.lower()
+    assert "proven" not in reason.lower()
+
+
+def test_cap_reason_distinguishes_the_two_situations():
+    empty_reason = cap_reason([])
+    self_declared_reason = cap_reason([_claim(EvidenceTier.T8)])
+    assert empty_reason != self_declared_reason
 
 
 def test_readiness_matches_the_weighted_sum_when_not_capped():

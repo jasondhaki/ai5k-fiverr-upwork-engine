@@ -71,6 +71,17 @@ _NUMBER_CORE_PATTERN = re.compile(r"\b\d[\d,]*(?:\.\d+)?\b")
 _PERCENT_CONTEXT_PATTERN = re.compile(r"\s{0,2}(?:%|percent(?:age)?\b)", re.IGNORECASE)
 _CONTEXT_LOOKAHEAD_CHARS = 12  # small window right after the number - "40" -> "%" or " percent"
 
+# Spec section 3: T8 is "self-declared, with no corroboration" - a claim can
+# be perfectly well-grounded (a real, verbatim quote) while still being
+# nothing more than the user's own unverified sentence about themselves.
+# These words assert THIRD-PARTY corroboration, which only T1-T4 evidence
+# actually carries - see PROOF_TIERS. Checked independently of the
+# generator's own prompt instruction (generator.py's _title_system_prompt),
+# the same belt-and-suspenders pattern the overview's T1-T4-only rule below
+# already uses: an instruction can be ignored by the model, a structural
+# check here cannot be.
+_PROOF_IMPLYING_PATTERN = re.compile(r"\b(proven|verified|guaranteed)\b", re.IGNORECASE)
+
 
 class AssetValidationError(ValueError):
     """Raised when a draft fails validation, naming exactly what failed.
@@ -120,10 +131,18 @@ def validate_asset(draft: DraftAsset) -> GeneratedAsset:
          mistake. Proof from self-declared or peer-endorsed evidence must
          never reach a generated overview, regardless of which layer would
          otherwise have caught it.
-      2. every claim_ref's span still reverifies against the source AS IT IS
+      2. if not every claim_ref is T1-T4, draft.text must not use proof-
+         implying language ("proven", "verified", "guaranteed") - a
+         well-grounded T8 claim is still just the user's own unverified
+         sentence about themselves (spec section 3), and overclaiming that
+         as proof is exactly the inflated-profile failure mode the evidence
+         cap exists to prevent. Independent of the generator's own prompt
+         instruction to the same effect (generator.py's
+         _title_system_prompt) - an instruction can be ignored, this can't.
+      3. every claim_ref's span still reverifies against the source AS IT IS
          RIGHT NOW - if the underlying document changed or an index drifted
          since extraction, this draft is stale and must not be trusted.
-      3. every number appearing in draft.text is backed by AT LEAST ONE
+      4. every number appearing in draft.text is backed by AT LEAST ONE
          claim_ref's CURRENT span text, checked with real word boundaries
          (never a bare digit-substring - "20" must not match inside "2019")
          and, when presented as a percentage, matching percent context in
@@ -146,6 +165,22 @@ def validate_asset(draft: DraftAsset) -> GeneratedAsset:
             raise AssetValidationError(
                 f"overview draft references {len(bad_tier_claims)} claim(s) below T4 - "
                 "proof must be drawn only from T1-T4 evidence"
+            )
+
+    # True only when EVERY backing claim is T1-T4 - mirrors the badge
+    # decision (result.html) and the title prompt's own proof-language rule
+    # (generator.py's _title_system_prompt): if even one contributing claim
+    # is self-declared, we can't be sure which claim the model actually drew
+    # a given number from, so this stays conservative rather than assuming
+    # the strongest claim present was the one used.
+    tier_verified = all(c.evidence_tier in PROOF_TIERS for c in draft.claim_refs)
+    if not tier_verified:
+        proof_words = sorted({m.lower() for m in _PROOF_IMPLYING_PATTERN.findall(draft.text)})
+        if proof_words:
+            raise AssetValidationError(
+                f"draft text uses proof-implying language {proof_words} but its "
+                "backing evidence is T5-T8 only (self-declared, no third-party "
+                "corroboration) - not strong enough to claim 'proven'/'verified'"
             )
 
     current_spans: list[SourceSpan] = []
@@ -187,4 +222,5 @@ def validate_asset(draft: DraftAsset) -> GeneratedAsset:
         text=draft.text,
         source_spans=current_spans,
         validated=True,
+        tier_verified=tier_verified,
     )

@@ -199,8 +199,22 @@ def test_analyze_persists_claims_and_result_under_the_same_run_id(monkeypatch):
     assert "can prove 1" in result_page.text
     # Benchmark data pulled in for display (not stored on Result itself) -
     # the pricing dimension's rate band and at least one dimension's target.
-    assert "Evidence supports $50" in result_page.text
+    # Labeled as benchmark context, not a conclusion about this user's own
+    # evidence (see the pricing_strategy Part-6 fix) - the number is the
+    # same, the framing around it changed.
+    assert "Top tier in this niche charges $50" in result_page.text
+    assert "not a conclusion about your own evidence" in result_page.text
     assert "Target:" in result_page.text
+    # Four of the seven dimensions are heuristic estimates over raw evidence
+    # text, not direct measurements (see is_provisional) - the report must
+    # say so visibly, not present all seven as equally measured.
+    assert "Estimated" in result_page.text
+    assert "measured directly" in result_page.text
+    # This profile's one claim is grounded (provable), so blocking is empty -
+    # that must read as "here's specifically what was checked", never as an
+    # unqualified all-clear on things (ToS risk, identity) with no signal at all.
+    assert "No unproven claims found" in result_page.text
+    assert "Terms-of-service risk and identity verification aren" in result_page.text
     # None of "cut costs by 40 percent" matches any required term/topic in
     # the real SMB-automation benchmark, so the skill-gap section - a report,
     # never a scoring dimension - should list at least one of them.

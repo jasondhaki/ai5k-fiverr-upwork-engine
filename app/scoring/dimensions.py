@@ -27,9 +27,31 @@ find all four at once.
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from app.config.weights import KEYWORD_REQUIRED_WEIGHT, KEYWORD_SEMANTIC_WEIGHT
 from app.schemas import Benchmark, Claim, SourceType
+
+# The exact marker every PROVISIONAL dimension function's own docstring uses
+# (see module docstring above: "Search this file for 'PROVISIONAL' to find
+# all four at once"). is_provisional() below reads this directly out of each
+# function's __doc__ rather than maintaining a second, separate list of
+# "which dimensions are provisional" - a hand-kept list is exactly the kind
+# of fact that silently drifts out of sync with the code it's describing the
+# moment someone adds or removes a PROVISIONAL block without remembering to
+# update it elsewhere too. The docstring text IS the single source of truth;
+# this just makes it machine-readable.
+_PROVISIONAL_MARKER = "PROVISIONAL - HEURISTIC, NOT A MEASUREMENT"
+
+
+def is_provisional(score_fn: Callable[..., float]) -> bool:
+    """True iff `score_fn`'s own docstring carries the PROVISIONAL marker
+    above - used by score_profile (app/scoring/profile.py) to set
+    DimensionScore.provisional so the report can tell a user which numbers
+    are measured directly versus estimated, without a second list that could
+    disagree with the docstrings themselves."""
+    return _PROVISIONAL_MARKER in (score_fn.__doc__ or "")
+
 
 # --- Shared helpers -----------------------------------------------------------
 

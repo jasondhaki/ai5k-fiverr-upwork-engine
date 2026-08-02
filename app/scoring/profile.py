@@ -1,6 +1,7 @@
 """
 score_profile: runs the seven pure dimension functions, wraps each result as
-a DimensionScore (with its config weight and a short human-readable detail),
+a DimensionScore (with its config weight, a short human-readable detail, and
+whether it's provisional - see is_provisional in app/scoring/dimensions.py),
 then applies the evidence cap as an explicit final step.
 """
 
@@ -17,6 +18,7 @@ from app.scoring.dimensions import (
     _claim_text_pool,
     _contains,
     completeness_checklist_status,
+    is_provisional,
     keyword_term_status,
     score_completeness,
     score_conversion,
@@ -68,6 +70,16 @@ def _detail(name: str, claims: list[Claim], benchmark: Benchmark) -> str | None:
         return "All required terms present" if missing == 0 else f"Missing {missing} required terms"
 
     if name == "portfolio_quality":
+        # A bare "0 item(s), 0 quantified" reads as a broken/bad score - it
+        # doesn't say whether that's because no portfolio source was ever
+        # supplied (nothing to score) or because sources WERE supplied and
+        # none produced a provable item (a real, actionable gap). Checked
+        # against ALL claims of a portfolio source type, not just publishable
+        # ones, specifically to catch the second case: sources present, none
+        # grounded.
+        if not any(c.source_type in _PORTFOLIO_SOURCES for c in claims):
+            return "No portfolio sources provided (add a GitHub repo, portfolio site, or demo)"
+
         portfolio_claims = [c for c in claims if c.source_type in _PORTFOLIO_SOURCES and c.publishable]
         item_ids = {c.source_span.document_id for c in portfolio_claims}
         quantified_ids = {
@@ -75,6 +87,8 @@ def _detail(name: str, claims: list[Claim], benchmark: Benchmark) -> str | None:
             for c in portfolio_claims
             if _NUMBER_PATTERN.search(c.claim_text) or _NUMBER_PATTERN.search(c.source_span.text)
         }
+        if not item_ids:
+            return "Portfolio sources provided, but none produced a provable item"
         return f"{len(item_ids)} item(s), {len(quantified_ids)} quantified"
 
     if name == "completeness":
@@ -115,6 +129,7 @@ def score_profile(claims: list[Claim], benchmark: Benchmark) -> tuple[list[Dimen
             score=score_fn(claims, benchmark),
             weight=DIMENSION_WEIGHTS[name],
             detail=_detail(name, claims, benchmark),
+            provisional=is_provisional(score_fn),
         )
         for name, score_fn in _DIMENSION_FUNCTIONS.items()
     ]

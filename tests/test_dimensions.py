@@ -12,6 +12,7 @@ import pytest
 from app.schemas import Benchmark, Claim, EvidenceTier, RateBand, SourceSpan, SourceType
 from app.scoring.dimensions import (
     completeness_checklist_status,
+    is_provisional,
     keyword_term_status,
     score_completeness,
     score_conversion,
@@ -336,3 +337,44 @@ def test_pricing_strategy_ignores_ungrounded_claims():
 
 def test_pricing_strategy_is_0_with_no_grounded_claims():
     assert score_pricing_strategy([], _benchmark()) == 0.0
+
+
+# --- is_provisional: derived directly from the docstring marker, never a ----
+# --- second, separately maintained list that could silently disagree -------
+
+
+def test_is_provisional_reads_the_marker_directly_from_the_docstring():
+    """Proves the mechanism itself, independent of which real functions
+    happen to be provisional today - if a docstring's marker changes,
+    is_provisional's answer changes with it, because there is nothing else
+    it could be reading."""
+
+    def fake_estimated():
+        """PROVISIONAL - HEURISTIC, NOT A MEASUREMENT: a stand-in docstring."""
+
+    def fake_measured():
+        """A real, direct measurement - no caveat here."""
+
+    def fake_no_docstring():
+        pass
+
+    assert is_provisional(fake_estimated) is True
+    assert is_provisional(fake_measured) is False
+    assert is_provisional(fake_no_docstring) is False
+
+
+def test_the_four_documented_heuristic_dimensions_are_provisional():
+    """Pins the CURRENT set of provisional dimensions (spec section 5's
+    module docstring: "FOUR of the seven dimensions... are properly about
+    that authored text"). If someone adds or removes a PROVISIONAL block in
+    dimensions.py without updating this list, this test - not a silently
+    drifting second list in production code - is what catches it."""
+    provisional_fns = {
+        score_positioning, score_completeness, score_conversion, score_pricing_strategy,
+    }
+    measured_fns = {score_evidence_quality, score_keyword_coverage, score_portfolio_quality}
+
+    for fn in provisional_fns:
+        assert is_provisional(fn), f"{fn.__name__} should be provisional"
+    for fn in measured_fns:
+        assert not is_provisional(fn), f"{fn.__name__} should be a direct measurement"

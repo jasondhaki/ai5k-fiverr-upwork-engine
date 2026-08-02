@@ -411,6 +411,27 @@ select {
 }
 .dim-name { font-size: 14px; font-weight: 600; }
 .dim-score { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--accent); }
+
+/* Calm, not a warning - a provisional dimension isn't broken, it's inferred
+   from available claims rather than measured directly. Muted like
+   .badge-self-declared (same "this is honest context, not an alarm"
+   language) but a distinct shape (uppercase, tighter) since it labels a
+   whole score card rather than a generated-text badge. */
+.badge-provisional {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
 .dim-bar-track {
   position: relative;
   background: var(--line);
@@ -713,6 +734,24 @@ select {
   margin-top: var(--space-2);
   color: var(--green);
   background: var(--green-bg);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+/* Deliberately NOT green - this asset's span grounding checks out, but the
+   evidence behind it is self-declared (T5-T8), with no third-party
+   corroboration. Styled neutrally so it never reads as an equivalent
+   guarantee to .badge-validated at a glance. */
+.badge-self-declared {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--space-2);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
   font-size: 11px;
   font-weight: 700;
   padding: 3px 8px;

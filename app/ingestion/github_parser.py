@@ -26,10 +26,44 @@ logger = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
 REQUEST_TIMEOUT = 10
 
+# Below this many characters of combined name+description+README, there's
+# nothing substantive enough to justify an extraction call - e.g. a bare repo
+# name and a one-line description with no README at all. Deliberately small
+# (a genuine short README still clears it easily): the goal is to catch
+# near-empty repos, not to second-guess real-but-brief documentation.
+MIN_REPO_TEXT_CHARS = 40
+
+# How many of the user's most-recently-pushed repos actually get analyzed
+# (README fetch + LLM extraction) - the expensive part. fetch_repos already
+# returns repos sorted pushed-first (GitHub API's own sort=pushed), so
+# slicing the first N here is exactly "the N most recently pushed repos".
+# Deliberately not unlimited: with recency_factor (config/weights.py)
+# already discounting old evidence heavily, a stale 20th repo contributes
+# little to the score but costs the same LLM calls as a fresh one -
+# GITHUB_REPO_CAP overrides this default, never a code change.
+DEFAULT_REPO_CAP = 12
+
 
 class GitHubFetchError(ValueError):
     """Raised when the GitHub API can't be reached or the user doesn't exist.
     Never swallowed - a typo'd username should not silently look like "no repos"."""
+
+
+def _repo_analysis_cap() -> int:
+    """GITHUB_REPO_CAP overrides DEFAULT_REPO_CAP; unset/blank keeps the
+    default. Fails loudly on a non-positive-integer value rather than
+    silently falling back, matching how every other env-var-selected knob
+    in this codebase behaves (see CLAUDE.md's "Swappable backends")."""
+    raw = os.environ.get("GITHUB_REPO_CAP", "").strip()
+    if not raw:
+        return DEFAULT_REPO_CAP
+    try:
+        cap = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"GITHUB_REPO_CAP must be an integer, got {raw!r}") from exc
+    if cap <= 0:
+        raise ValueError(f"GITHUB_REPO_CAP must be a positive integer, got {cap}")
+    return cap
 
 
 def _headers(accept: str = "application/vnd.github+json") -> dict[str, str]:
@@ -120,8 +154,28 @@ def parse_github(
         on_status(stage="fetching_repos", detail=f"Fetching repos for {username}")
     repos = fetch_repos(username, session=session)
     logger.info("Found %d non-fork repos for %s", len(repos), username)
+
+    # Already sorted most-recently-pushed-first (fetch_repos requests
+    # sort=pushed), so slicing here IS "keep the N most recent" - no
+    # re-sorting needed.
+    cap = _repo_analysis_cap()
+    total_found = len(repos)
+    skipped_by_cap = repos[cap:]
+    repos = repos[:cap]
+    if skipped_by_cap:
+        logger.info(
+            "Capping analysis to the %d most recently pushed repos for %s (%d skipped by cap)",
+            cap, username, len(skipped_by_cap),
+        )
+
     if on_status is not None:
-        on_status(detail=f"Found {len(repos)} non-fork repositories")
+        detail = f"Found {total_found} non-fork repositories"
+        if skipped_by_cap:
+            detail += (
+                f" - analyzing the {len(repos)} most recently pushed "
+                f"({len(skipped_by_cap)} skipped by cap)"
+            )
+        on_status(detail=detail)
     llm_client = client or build_default_client()
 
     claims: list[Claim] = []
@@ -136,10 +190,13 @@ def parse_github(
             )
         readme = _fetch_readme(repo, session=session)
         text = _repo_text(repo, readme)
-        if not text.strip():
-            logger.info("[%d/%d] repo %s has no usable text, skipping", index, len(repos), repo_name)
+        if len(text.strip()) < MIN_REPO_TEXT_CHARS:
+            logger.info(
+                "[%d/%d] repo %s has too little text (%d chars < %d), skipping - no LLM call spent",
+                index, len(repos), repo_name, len(text.strip()), MIN_REPO_TEXT_CHARS,
+            )
             if on_status is not None:
-                on_status(detail=f"Skipped {repo_name} (no usable text)")
+                on_status(detail=f"Skipped {repo_name} (no README)")
             continue
         logger.info("[%d/%d] Starting extraction for repo %s", index, len(repos), repo_name)
         if on_status is not None:

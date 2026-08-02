@@ -137,3 +137,132 @@ def test_generation_incomplete_is_surfaced_on_the_result_when_retries_exhaust(mo
 
     assert result.total_claims == 1  # real evidence existed - this isn't the empty case
     assert result.generation_incomplete is True
+
+
+# --- cap_note: names the real reason the cap fired, not a generic one -------
+#
+# Spec section 3's cap fires purely from evidence_tier (all T8), never from
+# groundedness - a claim can be a real, verbatim quote and still be T8 (no
+# THIRD-PARTY corroboration). The old static message ("Capped at 30 until
+# claims are proven") conflated the two; cap_note must now say which
+# situation actually produced the cap.
+
+
+def test_cap_note_mentions_no_evidence_when_there_are_no_claims_at_all():
+    result = run_pipeline(PipelineInput(niche="SMB workflow automation"))
+    assert result.capped is True
+    assert "no evidence" in result.cap_note.lower()
+    assert "self-declared" not in result.cap_note.lower()
+
+
+def test_cap_note_mentions_self_declared_when_claims_exist_but_are_all_t8(monkeypatch):
+    ingestion_body = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "I am a hard worker",
+                    "skill_ids": [],
+                    "evidence_quote": "I am a hard worker who never gives up",
+                }
+            ]
+        }
+    )
+
+    class _FakeIngestClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            return ingestion_body
+
+    monkeypatch.setattr(
+        "app.ingestion.upwork_parser.build_default_client", lambda: _FakeIngestClient()
+    )
+
+    inp = PipelineInput(
+        niche="SMB workflow automation",
+        upwork_text="I am a hard worker who never gives up and loves my job",
+    )
+    result = run_pipeline(inp)
+
+    assert result.total_claims == 1  # real, grounded claims - not the empty case
+    assert result.capped is True
+    assert "self-declared" in result.cap_note.lower()
+    assert "until claims are proven" not in result.cap_note.lower()
+
+
+# --- overview_blocked_by_evidence_tier: explain absent output, don't hide it -
+
+
+def test_overview_blocked_by_evidence_tier_when_no_t1_through_t4_claims_exist(monkeypatch):
+    """No T1-T4 evidence anywhere - the overview is never even attempted, and
+    the result must say so explicitly rather than leaving an unexplained gap
+    that generation_incomplete can't describe (nothing was tried at all)."""
+    ingestion_body = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "I am a hard worker",
+                    "skill_ids": [],
+                    "evidence_quote": "I am a hard worker who never gives up",
+                }
+            ]
+        }
+    )
+
+    class _FakeIngestClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            return ingestion_body
+
+    monkeypatch.setattr(
+        "app.ingestion.upwork_parser.build_default_client", lambda: _FakeIngestClient()
+    )
+
+    inp = PipelineInput(
+        niche="SMB workflow automation",
+        upwork_text="I am a hard worker who never gives up and loves my job",
+    )
+    result = run_pipeline(inp)
+
+    assert result.total_claims == 1
+    assert result.overview_blocked_by_evidence_tier is True
+    assert result.generation_incomplete is False  # never attempted, not a failure
+
+
+def test_overview_not_blocked_when_t1_through_t4_evidence_exists(monkeypatch):
+    ingestion_body = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "5 star review noting saved time",
+                    "skill_ids": [],
+                    "evidence_quote": "5-star review: client said the automation saved 10 hours a week",
+                }
+            ]
+        }
+    )
+
+    class _FakeIngestClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            return ingestion_body
+
+    monkeypatch.setattr(
+        "app.ingestion.upwork_parser.build_default_client", lambda: _FakeIngestClient()
+    )
+
+    inp = PipelineInput(
+        niche="SMB workflow automation",
+        upwork_text="5-star review: client said the automation saved 10 hours a week for their team",
+    )
+    result = run_pipeline(inp)
+
+    assert result.overview_blocked_by_evidence_tier is False
+
+
+def test_overview_blocked_by_evidence_tier_is_false_with_zero_claims_and_overview_present():
+    """Sanity check on the flag's definition: it's False whenever an
+    overview actually made it into `generated`, regardless of anything else -
+    the two are mutually exclusive by construction (see run_pipeline)."""
+    result = run_pipeline(PipelineInput(niche="SMB workflow automation"))
+    overview_present = any(a.kind == "overview" for a in result.generated)
+    assert overview_present is False  # zero claims - nothing was generated
+    # and with nothing generated, it degrades to "blocked" - the zero-claims
+    # case is a special case of "no T1-T4 evidence", not an exception to it
+    assert result.overview_blocked_by_evidence_tier is True

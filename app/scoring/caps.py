@@ -30,6 +30,38 @@ def all_claims_self_declared(claims: list[Claim]) -> bool:
     return all(c.evidence_tier == EvidenceTier.T8 for c in claims)
 
 
+def cap_reason(claims: list[Claim]) -> str:
+    """
+    Human-readable explanation of WHY the evidence cap fired, for display
+    alongside `capped` (only meaningful when all_claims_self_declared(claims)
+    is True). Distinguishes the two situations that boolean condition
+    conflates:
+
+      1. No claims at all - nothing has been extracted yet.
+      2. Claims exist (possibly even grounded/publishable ones - a claim can
+         be a verbatim, spot-checkable quote from the user's own CV/Upwork
+         text and STILL be T8, since T8 means no THIRD-PARTY corroboration,
+         not "ungrounded") but every single one tops out at T8.
+
+    Getting this distinction right matters: "capped until claims are proven"
+    is actively misleading when some claims already reverify against a real
+    source span - the cap fired because nothing corroborates them, not
+    because nothing points at a source. See CLAUDE.md's note on this exact
+    conflation.
+    """
+    if not claims:
+        return (
+            "Capped at 30 — no evidence has been added yet. Add a CV, "
+            "GitHub repo, or Upwork profile text to start building provable claims."
+        )
+    return (
+        "Capped at 30 — every claim on this profile is self-declared "
+        "(T8), with no third-party corroboration. Add a client review, a "
+        "public repo, a platform assessment, or a verifiable certification "
+        "to lift this."
+    )
+
+
 def apply_caps(
     dimensions: list[DimensionScore], claims: list[Claim]
 ) -> tuple[list[DimensionScore], float, bool]:

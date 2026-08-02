@@ -12,7 +12,14 @@ from datetime import date
 
 import pytest
 
-from app.ingestion.github_parser import GitHubFetchError, _commit_recency, fetch_repos, parse_github
+from app.ingestion.github_parser import (
+    DEFAULT_REPO_CAP,
+    GitHubFetchError,
+    _commit_recency,
+    _repo_analysis_cap,
+    fetch_repos,
+    parse_github,
+)
 from app.schemas import SourceType
 from app.storage.store import file_store
 
@@ -235,3 +242,150 @@ def test_parse_github_skips_repos_with_no_text():
     )
     claims = parse_github("octocat", session=session, client=_FakeLLMClient('{"claims": []}'))
     assert claims == []
+
+
+# --- Trivial-README skip: no LLM call spent on near-empty repos -------------
+
+
+def test_parse_github_skips_a_repo_with_only_a_bare_name_and_no_readme():
+    """Below MIN_REPO_TEXT_CHARS - not literally empty (there's a name), but
+    nothing substantive enough to spend an extraction call on."""
+    tiny_repo = {
+        "name": "x",
+        "description": None,
+        "fork": False,
+        "url": "https://api.github.com/repos/octocat/x",
+        "pushed_at": "2026-07-20T10:15:23Z",
+    }
+    session = _FakeSession(
+        {
+            "/users/octocat/repos": _FakeResponse(200, payload=[tiny_repo]),
+            "/repos/octocat/x/readme": _FakeResponse(404, text="not found"),
+        }
+    )
+
+    class _FailIfCalledClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            raise AssertionError("no LLM call should be made for a trivially small repo")
+
+    claims = parse_github("octocat", session=session, client=_FailIfCalledClient())
+    assert claims == []
+
+
+def test_parse_github_still_extracts_from_a_short_but_real_readme():
+    """A genuine short README must still clear the threshold and extract
+    normally - the skip is for near-empty repos, not brief ones."""
+    readme_text = "Cut retrieval latency 40% by rewriting the chunking strategy end to end."
+    session = _FakeSession(
+        {
+            "/users/octocat/repos": _FakeResponse(200, payload=[REPOS_PAYLOAD[0]]),
+            "/repos/octocat/rag-pipeline/readme": _FakeResponse(200, text=readme_text),
+        }
+    )
+    body = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "cut latency 40%",
+                    "skill_ids": ["rag_systems"],
+                    "evidence_quote": "Cut retrieval latency 40%",
+                }
+            ]
+        }
+    )
+    claims = parse_github("octocat", session=session, client=_FakeLLMClient(body))
+    assert any(c.publishable for c in claims)
+
+
+# --- Repo analysis cap: most-recently-pushed N, configurable ----------------
+
+
+def _repo_payload(name: str, pushed_at: str) -> dict:
+    return {
+        "name": name,
+        "description": "A project",
+        "fork": False,
+        "url": f"https://api.github.com/repos/octocat/{name}",
+        "pushed_at": pushed_at,
+    }
+
+
+def test_repo_analysis_cap_defaults_when_env_var_unset(monkeypatch):
+    monkeypatch.delenv("GITHUB_REPO_CAP", raising=False)
+    assert _repo_analysis_cap() == DEFAULT_REPO_CAP
+
+
+def test_repo_analysis_cap_honors_the_env_var(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPO_CAP", "3")
+    assert _repo_analysis_cap() == 3
+
+
+def test_repo_analysis_cap_rejects_a_non_positive_value(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPO_CAP", "0")
+    with pytest.raises(ValueError, match="GITHUB_REPO_CAP"):
+        _repo_analysis_cap()
+
+
+def test_repo_analysis_cap_rejects_a_non_integer_value(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPO_CAP", "not-a-number")
+    with pytest.raises(ValueError, match="GITHUB_REPO_CAP"):
+        _repo_analysis_cap()
+
+
+def test_parse_github_only_analyzes_the_n_most_recently_pushed_repos(monkeypatch):
+    """fetch_repos already returns repos most-recently-pushed-first, so the
+    cap keeping the first N is exactly 'the N most recent'. Five repos,
+    capped to 2: only the two with the latest pushed_at get extraction calls."""
+    monkeypatch.setenv("GITHUB_REPO_CAP", "2")
+    payload = [
+        _repo_payload("newest", "2026-07-20T00:00:00Z"),
+        _repo_payload("middle", "2026-07-10T00:00:00Z"),
+        _repo_payload("oldest", "2026-06-01T00:00:00Z"),
+    ]
+    routes = {"/users/octocat/repos": _FakeResponse(200, payload=payload)}
+    for repo in payload:
+        routes[f"/repos/octocat/{repo['name']}/readme"] = _FakeResponse(
+            200, text="This repo does something specific and real, cutting costs by 40%."
+        )
+    session = _FakeSession(routes)
+
+    fetched_readme_repos = set()
+    orig_get = session.get
+
+    def _tracking_get(url, params=None, headers=None, timeout=None):
+        if "/readme" in url:
+            fetched_readme_repos.add(url)
+        return orig_get(url, params=params, headers=headers, timeout=timeout)
+
+    session.get = _tracking_get
+
+    parse_github("octocat", session=session, client=_FakeLLMClient('{"claims": []}'))
+
+    # only the cap's worth of README fetches happened - the rest were never
+    # even fetched, let alone sent to the LLM
+    assert len(fetched_readme_repos) == 2
+    assert any("newest" in url for url in fetched_readme_repos)
+    assert any("middle" in url for url in fetched_readme_repos)
+    assert not any("oldest" in url for url in fetched_readme_repos)
+
+
+def test_parse_github_reports_skipped_by_cap_via_on_status(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPO_CAP", "1")
+    payload = [
+        _repo_payload("newest", "2026-07-20T00:00:00Z"),
+        _repo_payload("oldest", "2026-06-01T00:00:00Z"),
+    ]
+    routes = {"/users/octocat/repos": _FakeResponse(200, payload=payload)}
+    for repo in payload:
+        routes[f"/repos/octocat/{repo['name']}/readme"] = _FakeResponse(200, text="Something real here.")
+    session = _FakeSession(routes)
+
+    events: list[dict] = []
+    parse_github(
+        "octocat",
+        session=session,
+        client=_FakeLLMClient('{"claims": []}'),
+        on_status=lambda **fields: events.append(fields),
+    )
+
+    assert any("skipped by cap" in (e.get("detail") or "") for e in events)

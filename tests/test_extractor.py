@@ -105,9 +105,10 @@ def test_valid_span_is_grounded_and_published():
         source_type=SourceType.GITHUB_REPO,
     )
 
-    # identity/history/skills all saw the same body and would each produce
-    # this claim independently, but the dedup step collapses the exact
-    # repeat down to one - the profile shows this accomplishment once.
+    # GitHub repos only run the history+skills passes (see _PASSES_BY_SOURCE);
+    # both saw the same body and would each produce this claim independently,
+    # but the dedup step collapses the exact repeat down to one - the profile
+    # shows this accomplishment once.
     assert len(claims) == 1
     assert all(c.publishable for c in claims)
     assert all(c.source_span.text == "cutting false positives by 22%" for c in claims)
@@ -139,8 +140,9 @@ def test_a_quote_that_isnt_a_verbatim_substring_never_becomes_a_source_span():
         source_type=SourceType.GITHUB_REPO,
     )
 
-    # all three passes produced the identical ungrounded claim; dedup
-    # collapses the exact repeat down to one regardless of grounding status
+    # both passes GitHub repos run (history+skills) produced the identical
+    # ungrounded claim; dedup collapses the exact repeat down to one
+    # regardless of grounding status
     assert len(claims) == 1
     assert all(c.source_span is None for c in claims)
     assert all(not c.publishable for c in claims)
@@ -599,6 +601,64 @@ def test_expo_scaffolding_boilerplate_produces_no_claims_but_real_work_does():
     assert not any(
         term in c.claim_text.lower() for c in claims for term in ("emulator", "create-expo-app", "npm")
     )
+
+
+# --- Pass selection: which of identity/history/skills actually run ---------
+#
+# CLAUDE.md: "STOP running the identity pass on GitHub repos" - a repo README
+# has no identity information, so running it just spends an LLM call for
+# nothing. Verified per source_type by counting real calls, not by inspecting
+# internals - if a pass didn't run, .complete() was never called for it.
+
+
+def test_cv_runs_all_three_passes():
+    client = _StaticClient(json.dumps({"claims": []}))
+    extract_candidate_claims(client, document_id="doc-1", text=SOURCE, source_type=SourceType.CV)
+    assert client.calls == 3
+
+
+def test_github_repo_skips_the_identity_pass():
+    client = _StaticClient(json.dumps({"claims": []}))
+    extract_candidate_claims(
+        client, document_id="doc-1", text=SOURCE, source_type=SourceType.GITHUB_REPO
+    )
+    assert client.calls == 2
+
+
+def test_upwork_text_skips_the_history_pass():
+    client = _StaticClient(json.dumps({"claims": []}))
+    extract_candidate_claims(
+        client, document_id="doc-1", text=SOURCE, source_type=SourceType.UPWORK_TEXT
+    )
+    assert client.calls == 2
+
+
+def test_github_repo_only_calls_the_history_and_skills_system_prompts():
+    seen_instructions: list[str] = []
+
+    class _RecordingClient:
+        def complete(self, *, system: str, prompt: str) -> str:
+            seen_instructions.append(system)
+            return json.dumps({"claims": []})
+
+    extract_candidate_claims(
+        _RecordingClient(), document_id="doc-1", text=SOURCE, source_type=SourceType.GITHUB_REPO
+    )
+
+    assert not any(extractor._PASS_INSTRUCTIONS["identity"] in s for s in seen_instructions)
+    assert any(extractor._PASS_INSTRUCTIONS["history"] in s for s in seen_instructions)
+    assert any(extractor._PASS_INSTRUCTIONS["skills"] in s for s in seen_instructions)
+
+
+def test_an_unlisted_source_type_falls_back_to_all_three_passes():
+    """Any source_type route_input doesn't dispatch to yet (LinkedIn export,
+    portfolio site, etc.) must keep the pre-existing full-coverage behavior,
+    not silently narrow to some guessed subset."""
+    client = _StaticClient(json.dumps({"claims": []}))
+    extract_candidate_claims(
+        client, document_id="doc-1", text=SOURCE, source_type=SourceType.LINKEDIN_EXPORT
+    )
+    assert client.calls == 3
 
 
 # --- Tier assignment: rules-based, never model-supplied ---------------------
