@@ -47,7 +47,20 @@ def _database_url() -> str:
 def build_engine(database_url: str | None = None) -> Engine:
     url = database_url or _database_url()
     connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args)
+    return create_engine(
+        url,
+        connect_args=connect_args,
+        # Neon (and poolers generally) close idle server-side connections
+        # out from under a long-lived client pool - without pre_ping, the
+        # next checkout hands out that dead connection and the query fails
+        # with "SSL connection has been closed unexpectedly" instead of
+        # transparently reconnecting. pre_ping issues a cheap liveness check
+        # (SELECT 1) on checkout and replaces the connection if it's dead.
+        # pool_recycle proactively retires connections before Neon's own
+        # idle-close window, rather than waiting to discover they're dead.
+        pool_pre_ping=True,
+        pool_recycle=280,
+    )
 
 
 engine: Engine = build_engine()
