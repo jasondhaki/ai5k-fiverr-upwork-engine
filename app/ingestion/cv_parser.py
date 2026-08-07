@@ -17,7 +17,12 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
+from app.ingestion.extractor import (
+    LLMClient,
+    build_default_client,
+    extract_candidate_claims,
+    prepare_extraction_text,
+)
 from app.ingestion.pdf_extractor import CVParsingError, pdf_text_extractor
 from app.schemas import Claim, SourceType
 from app.storage.store import file_store
@@ -69,11 +74,16 @@ def parse_cv(
         )
 
     text = extract_pdf_text(cv_bytes)
-    # Spans are grounded against `text`, so SourceSpan.document_id must be the
-    # text document's id - but the original PDF is retained too, linked to it,
-    # so a parser backend switch or upgrade can always get back to the
-    # untouched source rather than just its current extraction.
-    pair = file_store.put_source(original=cv_bytes, text=text, original_suffix=".pdf")
+    # Boilerplate-stripped, length-capped BEFORE storage - see
+    # prepare_extraction_text's docstring for why the SAME prepared string
+    # must go to both put_source and extract_candidate_claims below (never
+    # the raw `text` to one and the prepared version to the other).
+    extraction_text = prepare_extraction_text(text)
+    # Spans are grounded against `extraction_text`, so SourceSpan.document_id
+    # must be that text document's id - but the original PDF is retained too,
+    # linked to it, so a parser backend switch or upgrade can always get back
+    # to the untouched source rather than just its current extraction.
+    pair = file_store.put_source(original=cv_bytes, text=extraction_text, original_suffix=".pdf")
 
     if on_status is not None:
         on_status(stage="extracting_claims", detail="Extracting claims from CV")
@@ -81,7 +91,7 @@ def parse_cv(
     return extract_candidate_claims(
         llm_client,
         document_id=pair.text_id,
-        text=text,
+        text=extraction_text,
         source_type=SourceType.CV,
         locator_prefix="cv",
     )

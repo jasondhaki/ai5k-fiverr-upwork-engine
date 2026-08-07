@@ -17,7 +17,12 @@ from typing import Callable
 
 import requests
 
-from app.ingestion.extractor import LLMClient, build_default_client, extract_candidate_claims
+from app.ingestion.extractor import (
+    LLMClient,
+    build_default_client,
+    extract_candidate_claims,
+    prepare_extraction_text,
+)
 from app.schemas import Claim, SourceType
 from app.storage.store import file_store
 
@@ -190,10 +195,17 @@ def parse_github(
             )
         readme = _fetch_readme(repo, session=session)
         text = _repo_text(repo, readme)
-        if len(text.strip()) < MIN_REPO_TEXT_CHARS:
+        # Boilerplate stripped and length-capped BEFORE the MIN_REPO_TEXT_CHARS
+        # check, not after: a repo whose raw text clears the floor only
+        # because it's padded with badges/license/install boilerplate should
+        # still be treated as trivial once that's removed, same as a repo
+        # that was always short - one skip check, not two.
+        extraction_text = prepare_extraction_text(text)
+        if len(extraction_text.strip()) < MIN_REPO_TEXT_CHARS:
             logger.info(
-                "[%d/%d] repo %s has too little text (%d chars < %d), skipping - no LLM call spent",
-                index, len(repos), repo_name, len(text.strip()), MIN_REPO_TEXT_CHARS,
+                "[%d/%d] repo %s has too little substantive text (%d chars < %d "
+                "after stripping boilerplate), skipping - no LLM call spent",
+                index, len(repos), repo_name, len(extraction_text.strip()), MIN_REPO_TEXT_CHARS,
             )
             if on_status is not None:
                 on_status(detail=f"Skipped {repo_name} (no README)")
@@ -207,14 +219,16 @@ def parse_github(
                 progress_total=len(repos),
             )
         # The original is the raw API data (the repo list entry plus its
-        # README) - retained as-is, distinct from `text`, the derived string
-        # spans are actually grounded against.
+        # README) - retained as-is, distinct from `extraction_text`, the
+        # derived, boilerplate-stripped, length-capped string spans are
+        # actually grounded against (and what's sent to the LLM - see
+        # prepare_extraction_text's docstring for why both must match).
         original = json.dumps({"repo": repo, "readme": readme}, indent=2).encode("utf-8")
-        pair = file_store.put_source(original=original, text=text, original_suffix=".json")
+        pair = file_store.put_source(original=original, text=extraction_text, original_suffix=".json")
         repo_claims = extract_candidate_claims(
             llm_client,
             document_id=pair.text_id,
-            text=text,
+            text=extraction_text,
             source_type=SourceType.GITHUB_REPO,
             locator_prefix=f"repo {repo_name}",
             observed_date=_commit_recency(repo),

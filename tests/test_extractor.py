@@ -105,10 +105,9 @@ def test_valid_span_is_grounded_and_published():
         source_type=SourceType.GITHUB_REPO,
     )
 
-    # GitHub repos only run the history+skills passes (see _PASSES_BY_SOURCE);
-    # both saw the same body and would each produce this claim independently,
-    # but the dedup step collapses the exact repeat down to one - the profile
-    # shows this accomplishment once.
+    # GitHub repos merge the history+skills passes into one call (see
+    # _MERGEABLE_PASS_SOURCES), so this body is seen once, producing this
+    # claim once - the profile shows this accomplishment once.
     assert len(claims) == 1
     assert all(c.publishable for c in claims)
     assert all(c.source_span.text == "cutting false positives by 22%" for c in claims)
@@ -140,9 +139,8 @@ def test_a_quote_that_isnt_a_verbatim_substring_never_becomes_a_source_span():
         source_type=SourceType.GITHUB_REPO,
     )
 
-    # both passes GitHub repos run (history+skills) produced the identical
-    # ungrounded claim; dedup collapses the exact repeat down to one
-    # regardless of grounding status
+    # GitHub's history+skills passes are merged into one call, so this body
+    # is seen once, producing one ungrounded claim.
     assert len(claims) == 1
     assert all(c.source_span is None for c in claims)
     assert all(not c.publishable for c in claims)
@@ -302,24 +300,25 @@ _DIGITAL_WORKSHOP_README = (
 
 
 def test_exact_duplicate_claim_text_collapses_to_one():
-    """The real reported bug: the same claim_text, verbatim, from two
-    different passes with two DIFFERENT (both validly grounded) spans - the
-    kind of duplication that would previously show up twice with different,
-    and per the separate offset bug, possibly wrong, spans attached."""
-    client = _PerPassClient(
-        {
-            "identity": json.dumps({"claims": []}),
-            "history": _single_claim_body(
+    """The real reported bug: the same claim_text, verbatim, twice over with
+    two DIFFERENT (both validly grounded) spans in the SAME merged-call
+    response (GitHub's history+skills passes are now one call - see
+    extractor._MERGEABLE_PASS_SOURCES) - the kind of duplication that would
+    previously show up twice with different, and per the separate offset bug,
+    possibly wrong, spans attached."""
+    client = _StaticClient(
+        _multi_claim_body(
+            (
                 _DIGITAL_WORKSHOP_CLAIM,
                 "Scaffolded the main 3D wireframe environment using React Three "
                 "Fiber and Drei",
             ),
-            "skills": _single_claim_body(
+            (
                 _DIGITAL_WORKSHOP_CLAIM,
                 "3D wireframe environment with React Three Fiber and Drei that "
                 "responds to the cursor",
             ),
-        }
+        )
     )
     claims = extract_candidate_claims(
         client,
@@ -334,23 +333,23 @@ def test_exact_duplicate_claim_text_collapses_to_one():
 
 
 def test_near_duplicate_reworded_claim_collapses_to_one():
-    """Same accomplishment, described in genuinely different wording by two
-    passes - no shared claim_text to key off of, only similarity."""
-    client = _PerPassClient(
-        {
-            "identity": json.dumps({"claims": []}),
-            "history": _single_claim_body(
+    """Same accomplishment, described in genuinely different wording within
+    the same merged-call response - no shared claim_text to key off of, only
+    similarity."""
+    client = _StaticClient(
+        _multi_claim_body(
+            (
                 _DIGITAL_WORKSHOP_CLAIM,
                 "Scaffolded the main 3D wireframe environment using React Three "
                 "Fiber and Drei",
             ),
-            "skills": _single_claim_body(
+            (
                 "Built a 3D wireframe environment with React Three Fiber and "
                 "Drei that responds to the cursor",
                 "3D wireframe environment with React Three Fiber and Drei that "
                 "responds to the cursor",
             ),
-        }
+        )
     )
     claims = extract_candidate_claims(
         client,
@@ -364,22 +363,21 @@ def test_near_duplicate_reworded_claim_collapses_to_one():
 
 
 def test_distinct_real_accomplishments_are_never_merged():
-    """Two genuinely different, unrelated accomplishments from the same real
-    repo must both survive - dedup must not over-merge just because they
-    came from the same document."""
-    client = _PerPassClient(
-        {
-            "identity": json.dumps({"claims": []}),
-            "history": _single_claim_body(
+    """Two genuinely different, unrelated accomplishments in the same
+    merged-call response must both survive - dedup must not over-merge just
+    because they came from the same document (or the same call)."""
+    client = _StaticClient(
+        _multi_claim_body(
+            (
                 "established a scalable skills data structure",
                 "Established a scalable data structure in data/skills.ts",
             ),
-            "skills": _single_claim_body(
+            (
                 "built the SkillNode component with Framer Motion",
                 "Created the SkillNode.tsx component using Lucide React icons "
                 "and Framer Motion",
             ),
-        }
+        )
     )
     claims = extract_candidate_claims(
         client,
@@ -603,6 +601,166 @@ def test_expo_scaffolding_boilerplate_produces_no_claims_but_real_work_does():
     )
 
 
+# --- Pre-send text preparation: strip boilerplate, then cap length ----------
+#
+# A separate concern from the boilerplate CLAIM filter above: these functions
+# shrink the document text itself before it's ever sent to the LLM, to spend
+# fewer tokens on text that was never going to produce a real claim anyway.
+
+
+def test_prepare_extraction_text_strips_nextjs_boilerplate_but_keeps_genuine_content():
+    prepared = extractor.prepare_extraction_text(NEXT_JS_BOILERPLATE_README)
+    assert len(prepared) < len(NEXT_JS_BOILERPLATE_README)
+    lowered = prepared.lower()
+    assert "bootstrapped with create-next-app" not in lowered
+    assert "npm run dev" not in lowered
+    assert "yarn dev" not in lowered
+    assert (
+        "Implemented a real-time collaborative cursor overlay using WebSockets"
+        in prepared
+    )
+
+
+def test_prepare_extraction_text_strips_expo_boilerplate_but_keeps_genuine_content():
+    prepared = extractor.prepare_extraction_text(EXPO_BOILERPLATE_README)
+    assert len(prepared) < len(EXPO_BOILERPLATE_README)
+    lowered = prepared.lower()
+    assert "create-expo-app" not in lowered
+    assert "welcome to your expo app" not in lowered
+    assert (
+        "Implemented an offline-first sync engine using WatermelonDB"
+        in prepared
+    )
+
+
+def test_strip_boilerplate_sections_removes_badge_only_lines():
+    text = (
+        "[![Build](https://img.shields.io/badge/build-passing-green)](https://ci.example.com) "
+        "[![License](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/licenses/MIT)\n\n"
+        "Implemented a real-time collaborative cursor overlay using WebSockets."
+    )
+    stripped = extractor._strip_boilerplate_sections(text)
+    assert "shields.io" not in stripped
+    assert "Implemented a real-time collaborative cursor overlay using WebSockets." in stripped
+
+
+def test_strip_boilerplate_sections_removes_license_and_contributing_sections():
+    text = (
+        "# my-project\n\n"
+        "A tool for doing something specific and real.\n\n"
+        "## License\n\n"
+        "MIT License. Copyright (c) 2026. Permission is hereby granted...\n\n"
+        "## Contributing\n\n"
+        "Pull requests are welcome. Please open an issue first.\n\n"
+        "## What I built\n\n"
+        "Implemented an offline-first sync engine using WatermelonDB."
+    )
+    stripped = extractor._strip_boilerplate_sections(text)
+    assert "MIT License" not in stripped
+    assert "Pull requests are welcome" not in stripped
+    assert "A tool for doing something specific and real." in stripped
+    assert "Implemented an offline-first sync engine using WatermelonDB." in stripped
+
+
+def test_strip_boilerplate_sections_stops_a_dropped_section_at_the_next_heading():
+    """A boilerplate section (License) must not swallow a later, real
+    heading's content just because no closing marker exists in Markdown."""
+    text = (
+        "## License\n\nMIT License.\n\n"
+        "## What I built\n\nShipped a fraud-detection model to production."
+    )
+    stripped = extractor._strip_boilerplate_sections(text)
+    assert "MIT License" not in stripped
+    assert "## What I built" in stripped
+    assert "Shipped a fraud-detection model to production." in stripped
+
+
+def test_strip_boilerplate_command_fence_with_comment_lines_is_still_dropped():
+    """The exact create-next-app shape: `# or` separator comments between
+    each package-manager alternative must not stop the fence from being
+    recognized as pure boilerplate."""
+    text = (
+        "Real project description here, cutting deploy time significantly.\n\n"
+        "```bash\n"
+        "npm run dev\n"
+        "# or\n"
+        "yarn dev\n"
+        "# or\n"
+        "pnpm dev\n"
+        "```"
+    )
+    stripped = extractor._strip_boilerplate_sections(text)
+    assert "npm run dev" not in stripped
+    assert "yarn dev" not in stripped
+    assert "Real project description here, cutting deploy time significantly." in stripped
+
+
+def test_strip_boilerplate_sections_leaves_a_mixed_fence_alone():
+    """A fence with real, non-generic content mixed in must survive intact -
+    only a fence that is ENTIRELY generic install/run commands is dropped."""
+    text = (
+        "```bash\n"
+        "npm install\n"
+        "export CUSTOM_API_KEY=your-key-here\n"
+        "```"
+    )
+    stripped = extractor._strip_boilerplate_sections(text)
+    assert "CUSTOM_API_KEY" in stripped
+
+
+def test_cap_text_leaves_short_text_untouched():
+    text = "short text, well under any real limit"
+    assert extractor._cap_text(text, 100) == text
+
+
+def test_cap_text_truncates_long_text_and_stays_a_literal_prefix():
+    text = "word " * 5000
+    capped = extractor._cap_text(text, 100)
+    assert len(capped) <= 100
+    # The result must be an exact prefix of the original - never rewritten,
+    # never appended to - so any grounded span inside it still points at the
+    # real source characters.
+    assert text.startswith(capped)
+
+
+def test_extraction_char_limit_env_override(monkeypatch):
+    monkeypatch.setenv("MAX_EXTRACTION_CHARS", "42")
+    assert extractor._extraction_char_limit() == 42
+
+
+def test_extraction_char_limit_rejects_a_non_positive_value(monkeypatch):
+    monkeypatch.setenv("MAX_EXTRACTION_CHARS", "0")
+    with pytest.raises(ValueError):
+        extractor._extraction_char_limit()
+
+
+def test_extraction_char_limit_rejects_a_non_integer_value(monkeypatch):
+    monkeypatch.setenv("MAX_EXTRACTION_CHARS", "not-a-number")
+    with pytest.raises(ValueError):
+        extractor._extraction_char_limit()
+
+
+def test_prepare_extraction_text_grounding_still_works_after_stripping_and_capping():
+    """End-to-end sanity check: a claim quoted from the SURVIVING portion of
+    a stripped-and-capped document still grounds correctly against that same
+    prepared text - the exact invariant prepare_extraction_text's docstring
+    depends on (callers must ground against the same string sent to the LLM,
+    not the original raw text)."""
+    prepared = extractor.prepare_extraction_text(EXPO_BOILERPLATE_README)
+    client = _StaticClient(
+        _single_claim_body(
+            "built an offline-first sync engine using WatermelonDB",
+            "offline-first sync engine using WatermelonDB",
+        )
+    )
+    claims = extract_candidate_claims(
+        client, document_id="doc-1", text=prepared, source_type=SourceType.GITHUB_REPO
+    )
+    assert any(c.publishable for c in claims)
+    published = [c for c in claims if c.publishable]
+    assert published[0].source_span.text == "offline-first sync engine using WatermelonDB"
+
+
 # --- Pass selection: which of identity/history/skills actually run ---------
 #
 # CLAUDE.md: "STOP running the identity pass on GitHub repos" - a repo README
@@ -617,20 +775,25 @@ def test_cv_runs_all_three_passes():
     assert client.calls == 3
 
 
-def test_github_repo_skips_the_identity_pass():
+def test_github_repo_skips_the_identity_pass_and_merges_the_rest_into_one_call():
+    """GitHub's history+skills passes are folded into a single merged call
+    (extractor._MERGEABLE_PASS_SOURCES) - one call total, not two, and no
+    identity pass at all."""
     client = _StaticClient(json.dumps({"claims": []}))
     extract_candidate_claims(
         client, document_id="doc-1", text=SOURCE, source_type=SourceType.GITHUB_REPO
     )
-    assert client.calls == 2
+    assert client.calls == 1
 
 
-def test_upwork_text_skips_the_history_pass():
+def test_upwork_text_skips_the_history_pass_and_merges_the_rest_into_one_call():
+    """Upwork's identity+skills passes are folded into a single merged call
+    the same way GitHub's are - one call total, not two."""
     client = _StaticClient(json.dumps({"claims": []}))
     extract_candidate_claims(
         client, document_id="doc-1", text=SOURCE, source_type=SourceType.UPWORK_TEXT
     )
-    assert client.calls == 2
+    assert client.calls == 1
 
 
 def test_github_repo_only_calls_the_history_and_skills_system_prompts():
@@ -645,6 +808,8 @@ def test_github_repo_only_calls_the_history_and_skills_system_prompts():
         _RecordingClient(), document_id="doc-1", text=SOURCE, source_type=SourceType.GITHUB_REPO
     )
 
+    # One merged call, whose single system prompt carries both instructions.
+    assert len(seen_instructions) == 1
     assert not any(extractor._PASS_INSTRUCTIONS["identity"] in s for s in seen_instructions)
     assert any(extractor._PASS_INSTRUCTIONS["history"] in s for s in seen_instructions)
     assert any(extractor._PASS_INSTRUCTIONS["skills"] in s for s in seen_instructions)
@@ -709,6 +874,21 @@ _MULTI_FRAGMENT_SOURCE = (
 
 def _single_claim_body(claim_text: str, quote: str) -> str:
     return json.dumps({"claims": [{"claim_text": claim_text, "skill_ids": [], "evidence_quote": quote}]})
+
+
+def _multi_claim_body(*entries: tuple[str, str]) -> str:
+    """Several claims in ONE response body - what a single merged call (see
+    extractor._MERGEABLE_PASS_SOURCES) returns for a source type whose passes
+    are folded into one LLM call, in place of separate single-claim bodies
+    from separate calls."""
+    return json.dumps(
+        {
+            "claims": [
+                {"claim_text": claim_text, "skill_ids": [], "evidence_quote": quote}
+                for claim_text, quote in entries
+            ]
+        }
+    )
 
 
 def test_cv_pass_specific_tiers_are_assigned_without_llm_involvement():
@@ -902,7 +1082,7 @@ def test_groq_backed_extraction_grounds_claims_same_as_anthropic():
         client, document_id="doc-1", text=SOURCE, source_type=SourceType.GITHUB_REPO
     )
 
-    assert len(claims) == 1  # one per pass collapsed by dedup, same as Anthropic-backed
+    assert len(claims) == 1  # the one merged call's one claim, same as Anthropic-backed
     assert all(c.publishable for c in claims)
     assert all(c.source_span.text == "cutting false positives by 22%" for c in claims)
 

@@ -489,6 +489,164 @@ def _is_boilerplate(text: str | None) -> bool:
     return any(phrase in lowered for phrase in _BOILERPLATE_PHRASES)
 
 
+# --- Pre-send text preparation: strip boilerplate, then cap length ----------
+#
+# A separate, EARLIER step from _is_boilerplate above: _is_boilerplate filters
+# a MODEL'S OUTPUT (a claim/quote) after an LLM call already happened; the
+# functions below filter the INPUT before any call is made, so fewer tokens
+# are spent on text that was never going to produce a real claim anyway.
+# Seeded from the same _BOILERPLATE_PHRASES/_BOILERPLATE_COMMAND_PATTERN this
+# module already uses for that later check - reused, not forked into a
+# second, separately-maintained list.
+#
+# Deliberately rules-based, not model-based, for the same reason
+# _is_boilerplate is: explainable and auditable, not a second "can the model
+# be trusted here" problem.
+
+# A markdown badge image, optionally wrapped in a link - `![alt](url)` or
+# `[![alt](url)](url)`. A line consisting of nothing but one or more of these
+# (badge rows are commonly several in a row, space-separated) is a visual
+# status strip, never claim-worthy prose.
+_BADGE_TOKEN_PATTERN = r"(?:\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)|!\[[^\]]*\]\([^)]*\))"
+_BADGE_LINE_PATTERN = re.compile(rf"^\s*(?:{_BADGE_TOKEN_PATTERN}\s*)+$")
+
+# A conservative, known-safe list of section headings whose content is
+# reliably non-substantive boilerplate (license text, PR etiquette, a table
+# of contents, a badge row under its own heading) - deliberately NOT a
+# generic "drop anything under a heading that looks unimportant" heuristic,
+# since guessing wrong there risks eating real project content.
+_BOILERPLATE_SECTION_HEADING_PATTERN = re.compile(
+    r"^#{1,6}\s*(license|licence|contributing|table of contents|badges?)\s*$",
+    re.IGNORECASE,
+)
+_ANY_HEADING_PATTERN = re.compile(r"^#{1,6}\s+\S")
+
+# A fenced code block ```...``` where every substantive line (blank lines and
+# bare `#`-comment lines don't count against it) matches
+# _BOILERPLATE_COMMAND_PATTERN is a generic install/run instructions block,
+# identical across every project scaffolded from the same template - safe to
+# drop entirely. A fence that mixes real content with commands is left alone.
+_FENCE_PATTERN = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+
+
+def _strip_boilerplate_command_fences(text: str) -> str:
+    def _replace(match: re.Match) -> str:
+        body = match.group(1)
+        significant_lines = [
+            line for line in body.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if significant_lines and all(
+            _BOILERPLATE_COMMAND_PATTERN.search(line) for line in significant_lines
+        ):
+            return ""
+        return match.group(0)
+
+    return _FENCE_PATTERN.sub(_replace, text)
+
+
+def _strip_boilerplate_sections(text: str) -> str:
+    """
+    Remove known-boilerplate markup (badge lines, generic install/run code
+    fences) and sections (license/contributing/TOC/badges headings and
+    everything under them, up to the next heading) from `text`. Conservative
+    by construction: only removes what matches an explicit, curated pattern -
+    anything not recognized as boilerplate passes through untouched.
+    """
+    lines = text.splitlines()
+    kept: list[str] = []
+    skipping_section = False
+    for line in lines:
+        if skipping_section:
+            if _ANY_HEADING_PATTERN.match(line):
+                skipping_section = False
+            else:
+                continue
+        if _BOILERPLATE_SECTION_HEADING_PATTERN.match(line.strip()):
+            skipping_section = True
+            continue
+        if _BADGE_LINE_PATTERN.match(line):
+            continue
+        if any(phrase in line.lower() for phrase in _BOILERPLATE_PHRASES):
+            continue
+        kept.append(line)
+
+    stripped = _strip_boilerplate_command_fences("\n".join(kept))
+    # Collapse runs of blank lines left behind by removed sections/fences -
+    # cosmetic, and saves a few more characters.
+    return re.sub(r"\n{3,}", "\n\n", stripped).strip()
+
+
+# How many characters of (already boilerplate-stripped) document text are
+# actually sent to the LLM per call - a safety net against outlier-large
+# documents costing tokens disproportionate to what they add. 6000 chars
+# (~1,500 tokens) comfortably covers the vast majority of real CVs/READMEs -
+# this module's own docstring cites 7,898 characters as the largest README
+# measured against this codebase - while bounding the worst case.
+# MAX_EXTRACTION_CHARS overrides this default, never a code change; tune it
+# from real measured call/char counts (see the token-reduction plan's "A0"
+# step) rather than guessing further.
+_MAX_EXTRACTION_CHARS_ENV = "MAX_EXTRACTION_CHARS"
+DEFAULT_MAX_EXTRACTION_CHARS = 6000
+
+
+def _extraction_char_limit() -> int:
+    """MAX_EXTRACTION_CHARS overrides DEFAULT_MAX_EXTRACTION_CHARS; unset/
+    blank keeps the default. Fails loudly on a non-positive-integer value,
+    matching GITHUB_REPO_CAP's own convention (see github_parser.py)."""
+    raw = os.environ.get(_MAX_EXTRACTION_CHARS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_EXTRACTION_CHARS
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_MAX_EXTRACTION_CHARS_ENV} must be an integer, got {raw!r}"
+        ) from exc
+    if limit <= 0:
+        raise ValueError(f"{_MAX_EXTRACTION_CHARS_ENV} must be a positive integer, got {limit}")
+    return limit
+
+
+def _cap_text(text: str, limit: int) -> str:
+    """Truncate `text` to at most `limit` characters, preferring to cut at a
+    paragraph or word boundary near the limit rather than mid-word - purely
+    cosmetic (a truncated word costs nothing extra downstream), but avoids an
+    ugly half-word cutoff for no reason. Never appends any marker text: the
+    returned string is exactly what gets sent to the LLM AND stored as the
+    document a claim's span grounds against (see prepare_extraction_text), so
+    it must contain nothing that wasn't literally in the source."""
+    if len(text) <= limit:
+        return text
+    truncated = text[:limit]
+    break_point = truncated.rfind("\n\n")
+    if break_point == -1:
+        break_point = truncated.rfind(" ")
+    if break_point > limit * 0.5:  # don't discard most of the text chasing a boundary
+        truncated = truncated[:break_point]
+    return truncated.rstrip()
+
+
+def prepare_extraction_text(text: str) -> str:
+    """
+    Apply the boilerplate stripper, then the hard character cap, to `text`
+    BEFORE it is stored (file_store.put_source) or sent to the LLM as a
+    prompt (extract_candidate_claims's `text` argument).
+
+    Both call sites (app/ingestion/github_parser.py, app/ingestion/
+    cv_parser.py) MUST feed this same, already-prepared string into both
+    put_source and extract_candidate_claims - never the original raw text to
+    one and the prepared text to the other. A claim's span indices are
+    computed against whatever string was actually sent to the LLM; if a
+    document is stored under a DIFFERENT string, those indices point at the
+    wrong text the next time it's read back (e.g. reverify_span in
+    app/generation/validator.py re-reading the stored document to confirm a
+    generated asset's numbers are still backed by real evidence).
+    """
+    stripped = _strip_boilerplate_sections(text)
+    return _cap_text(stripped, _extraction_char_limit())
+
+
 def _provisional_tier(source_type: SourceType, pass_name: str, span_text: str) -> EvidenceTier:
     """
     THE ONLY PLACE a Claim's evidence_tier is decided at extraction time.
@@ -507,25 +665,64 @@ def _provisional_tier(source_type: SourceType, pass_name: str, span_text: str) -
     return _PROVISIONAL_TIER_BY_SOURCE.get(source_type, EvidenceTier.T8)
 
 
+_RESPONSE_FORMAT_INSTRUCTIONS = (
+    'Return ONLY JSON matching {"claims": [{"claim_text": str, '
+    '"skill_ids": [str], "evidence_quote": str}]}. '
+    "evidence_quote MUST be copied character-for-character from the EXACT "
+    "text given by the user - the literal substring that supports the "
+    "claim. Do not paraphrase, summarize, fix typos, add ellipses, or "
+    "change whitespace or punctuation in any way - it must be an exact, "
+    "verbatim, contiguous quote that could be found with a plain text "
+    "search. Keep it as short as possible while still supporting the "
+    'claim. If nothing qualifies, return {"claims": []}. No prose, no '
+    "markdown fences - JSON only."
+)
+
+
 def _system_prompt(pass_name: str) -> str:
     instruction = _PASS_INSTRUCTIONS[pass_name]
     return (
         f"You extract claims from freelancer profile text. {instruction}\n"
-        'Return ONLY JSON matching {"claims": [{"claim_text": str, '
-        '"skill_ids": [str], "evidence_quote": str}]}. '
-        "evidence_quote MUST be copied character-for-character from the EXACT "
-        "text given by the user - the literal substring that supports the "
-        "claim. Do not paraphrase, summarize, fix typos, add ellipses, or "
-        "change whitespace or punctuation in any way - it must be an exact, "
-        "verbatim, contiguous quote that could be found with a plain text "
-        "search. Keep it as short as possible while still supporting the "
-        'claim. If nothing qualifies, return {"claims": []}. No prose, no '
-        "markdown fences - JSON only."
+        f"{_RESPONSE_FORMAT_INSTRUCTIONS}"
     )
 
 
-def _run_pass(client: LLMClient, pass_name: str, text: str) -> _ExtractionBatch:
-    system = _system_prompt(pass_name)
+# Source types where every pass listed for them in _PASSES_BY_SOURCE can be
+# folded into ONE LLM call instead of one call per pass - cutting both the
+# request count AND (since each call was re-sending the same document text)
+# the token volume of a run. Safe specifically because _provisional_tier
+# never branches on WHICH pass produced a claim for either of these two
+# source types (GITHUB_REPO always resolves via _PROVISIONAL_TIER_BY_SOURCE
+# alone; UPWORK_TEXT's one pass-independent refinement is a text-pattern
+# match, not a pass_name check) - see _provisional_tier's docstring. Nothing
+# downstream needs to know which instruction produced a given claim for
+# either of them.
+#
+# CV is deliberately NOT included: _provisional_tier's one real pass_name
+# branch (source_type == CV and pass_name == "skills" -> T8) is
+# tier-determinative, and merging would require the model to self-report
+# which category a claim belongs to - a small but real erosion of the
+# invariant that "the model that ran the pass never supplies a tier"
+# (_ExtractedSpan has no such field). CV is also the cheapest source per run
+# (3 calls total, never multiplied by a repo count), so the risk isn't worth
+# the reward here - see CLAUDE.md-adjacent plan notes on this exact tradeoff.
+_MERGEABLE_PASS_SOURCES = frozenset({SourceType.GITHUB_REPO, SourceType.UPWORK_TEXT})
+
+
+def _merged_system_prompt(pass_names: tuple[str, ...]) -> str:
+    """One system prompt covering every pass in `pass_names` at once, for
+    source types in _MERGEABLE_PASS_SOURCES. Each pass's own instruction text
+    is included verbatim (not paraphrased or summarized) so a single merged
+    call still asks for exactly what the separate calls would have asked for,
+    just once instead of once per pass."""
+    instructions = " ".join(_PASS_INSTRUCTIONS[name] for name in pass_names)
+    return (
+        f"You extract claims from freelancer profile text. {instructions}\n"
+        f"{_RESPONSE_FORMAT_INSTRUCTIONS}"
+    )
+
+
+def _run_pass(client: LLMClient, label: str, system: str, text: str) -> _ExtractionBatch:
     for attempt in range(RETRY_ATTEMPTS):
         try:
             raw = client.complete(system=system, prompt=text)
@@ -536,14 +733,14 @@ def _run_pass(client: LLMClient, pass_name: str, text: str) -> _ExtractionBatch:
             if remaining_attempts > 0:
                 logger.warning(
                     "[%s] pass '%s': malformed response, retrying (attempt %d/%d)",
-                    _source_label.get(), pass_name, attempt + 2, RETRY_ATTEMPTS,
+                    _source_label.get(), label, attempt + 2, RETRY_ATTEMPTS,
                 )
             continue
     # Every attempt came back malformed - contribute nothing rather than risk
     # a claim built on data that didn't pass its own schema.
     logger.warning(
         "[%s] pass '%s': gave up after %d malformed responses",
-        _source_label.get(), pass_name, RETRY_ATTEMPTS,
+        _source_label.get(), label, RETRY_ATTEMPTS,
     )
     return _ExtractionBatch(claims=[])
 
@@ -571,18 +768,35 @@ def extract_candidate_claims(
     _source_label.set(locator_prefix or source_type.value)
 
     pass_names = _PASSES_BY_SOURCE.get(source_type, _DEFAULT_PASSES)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass_names)) as pool:
-        # A fresh copy_context() per submission, not one shared Context reused
-        # across all of them - a single Context object raises RuntimeError
-        # ("already entered") if .run() executes concurrently from more than
-        # one thread at once, which simultaneous passes would trigger
-        # immediately. Independent copies of the same snapshotted value are
-        # safe to run concurrently; a single shared one is not (verified).
-        futures = {
-            pool.submit(contextvars.copy_context().run, _run_pass, client, pass_name, text): pass_name
-            for pass_name in pass_names
-        }
-        batches = [(futures[future], future.result()) for future in concurrent.futures.as_completed(futures)]
+
+    if source_type in _MERGEABLE_PASS_SOURCES and len(pass_names) > 1:
+        # One call covering every pass at once instead of one call per pass -
+        # see _MERGEABLE_PASS_SOURCES for why this is safe for exactly these
+        # source types. `label` is only ever used for log messages and as the
+        # `pass_name` argument to _provisional_tier below, which (for both
+        # source types in this branch) never actually branches on its value.
+        label = "+".join(pass_names)
+        batches = [(label, _run_pass(client, label, _merged_system_prompt(pass_names), text))]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pass_names)) as pool:
+            # A fresh copy_context() per submission, not one shared Context
+            # reused across all of them - a single Context object raises
+            # RuntimeError ("already entered") if .run() executes
+            # concurrently from more than one thread at once, which
+            # simultaneous passes would trigger immediately. Independent
+            # copies of the same snapshotted value are safe to run
+            # concurrently; a single shared one is not (verified).
+            futures = {
+                pool.submit(
+                    contextvars.copy_context().run,
+                    _run_pass, client, pass_name, _system_prompt(pass_name), text,
+                ): pass_name
+                for pass_name in pass_names
+            }
+            batches = [
+                (futures[future], future.result())
+                for future in concurrent.futures.as_completed(futures)
+            ]
 
     claims: list[Claim] = []
     for pass_name, batch in batches:
